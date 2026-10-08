@@ -1,4 +1,6 @@
-# DART Announce
+# DART Announce (dart_announcer)
+
+A train departure display based on a selected station (e.g. the nearest station to the house). The project runs on an ESP32 and a Waveshare e-paper panel with a Li-ion battery giving months of charge at a time, encased in a frame and hung in a kitchen for a commuting family.
 
 Fetches live Dublin Area Rapid Transit (DART) departure times from
 [Irish Rail's public real-time API](http://api.irishrail.ie/realtime/) for a
