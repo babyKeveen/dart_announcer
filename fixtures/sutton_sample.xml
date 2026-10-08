@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ArrayOfObjStationData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://api.irishrail.ie/realtime/">
+  <objStationData>
+    <Servertime>2026-09-17T22:28:40.017</Servertime>
+    <Traincode>E948 </Traincode>
+    <Stationfullname>Sutton</Stationfullname>
+    <Stationcode>SUTTN</Stationcode>
+    <Querytime>22:28:40</Querytime>
+    <Traindate>17 Sep 2026</Traindate>
+    <Origin>Greystones</Origin>
+    <Destination>Howth</Destination>
+    <Origintime>21:16</Origintime>
+    <Destinationtime>22:42</Destinationtime>
+    <Status>En Route</Status>
+    <Lastlocation>Departed Raheny</Lastlocation>
+    <Duein>8</Duein>
+    <Late>2</Late>
+    <Exparrival>22:36</Exparrival>
+    <Expdepart>22:36</Expdepart>
+    <Scharrival>22:34</Scharrival>
+    <Schdepart>22:34</Schdepart>
+    <Direction>Northbound</Direction>
+    <Traintype>DART</Traintype>
+    <Locationtype>S</Locationtype>
+  </objStationData>
+  <objStationData>
+    <Servertime>2026-09-17T22:28:40.017</Servertime>
+    <Traincode>E949 </Traincode>
+    <Stationfullname>Sutton</Stationfullname>
+    <Stationcode>SUTTN</Stationcode>
+    <Querytime>22:28:40</Querytime>
+    <Traindate>17 Sep 2026</Traindate>
+    <Origin>Greystones</Origin>
+    <Destination>Howth</Destination>
+    <Origintime>21:50</Origintime>
+    <Destinationtime>23:17</Destinationtime>
+    <Status>En Route</Status>
+    <Lastlocation>Departed Seapoint</Lastlocation>
+    <Duein>43</Duein>
+    <Late>2</Late>
+    <Exparrival>23:10</Exparrival>
+    <Expdepart>23:11</Expdepart>
+    <Scharrival>23:09</Scharrival>
+    <Schdepart>23:09</Schdepart>
+    <Direction>Northbound</Direction>
+    <Traintype>DART</Traintype>
+    <Locationtype>S</Locationtype>
+  </objStationData>
+  <objStationData>
+    <Servertime>2026-09-17T22:28:40.017</Servertime>
+    <Traincode>E950 </Traincode>
+    <Stationfullname>Sutton</Stationfullname>
+    <Stationcode>SUTTN</Stationcode>
+    <Querytime>22:28:40</Querytime>
+    <Traindate>17 Sep 2026</Traindate>
+    <Origin>Greystones</Origin>
+    <Destination>Howth</Destination>
+    <Origintime>22:20</Origintime>
+    <Destinationtime>23:47</Destinationtime>
+    <Status>En Route</Status>
+    <Lastlocation />
+    <Duein>72</Duein>
+    <Late>0</Late>
+    <Exparrival>23:40</Exparrival>
+    <Expdepart>23:40</Expdepart>
+    <Scharrival>23:39</Scharrival>
+    <Schdepart>23:40</Schdepart>
+    <Direction>Northbound</Direction>
+    <Traintype>DART</Traintype>
+    <Locationtype>S</Locationtype>
+  </objStationData>
+  <objStationData>
+    <Servertime>2026-09-17T22:28:40.017</Servertime>
+    <Traincode>E263 </Traincode>
+    <Stationfullname>Sutton</Stationfullname>
+    <Stationcode>SUTTN</Stationcode>
+    <Querytime>22:28:40</Querytime>
+    <Traindate>17 Sep 2026</Traindate>
+    <Origin>Howth</Origin>
+    <Destination>Bray</Destination>
+    <Origintime>22:46</Origintime>
+    <Destinationtime>00:01</Destinationtime>
+    <Status>No Information</Status>
+    <Lastlocation />
+    <Duein>21</Duein>
+    <Late>0</Late>
+    <Exparrival>22:49</Exparrival>
+    <Expdepart>22:49</Expdepart>
+    <Scharrival>22:49</Scharrival>
+    <Schdepart>22:49</Schdepart>
+    <Direction>Southbound</Direction>
+    <Traintype>DART</Traintype>
+    <Locationtype>S</Locationtype>
+  </objStationData>
+  <objStationData>
+    <Servertime>2026-09-17T22:28:40.017</Servertime>
+    <Traincode>E702 </Traincode>
+    <Stationfullname>Sutton</Stationfullname>
+    <Stationcode>SUTTN</Stationcode>
+    <Querytime>22:28:40</Querytime>
+    <Traindate>17 Sep 2026</Traindate>
+    <Origin>Howth</Origin>
+    <Destination>Dublin Connolly</Destination>
+    <Origintime>23:21</Origintime>
+    <Destinationtime>23:48</Destinationtime>
+    <Status>No Information</Status>
+    <Lastlocation />
+    <Duein>56</Duein>
+    <Late>0</Late>
+    <Exparrival>23:24</Exparrival>
+    <Expdepart>23:24</Expdepart>
+    <Scharrival>23:24</Scharrival>
+    <Schdepart>23:24</Schdepart>
+    <Direction>Southbound</Direction>
+    <Traintype>DART</Traintype>
+    <Locationtype>S</Locationtype>
+  </objStationData>
+  <objStationData>
+    <Servertime>2026-09-17T22:28:40.017</Servertime>
+    <Traincode>E704 </Traincode>
+    <Stationfullname>Sutton</Stationfullname>
+    <Stationcode>SUTTN</Stationcode>
+    <Querytime>22:28:40</Querytime>
+    <Traindate>17 Sep 2026</Traindate>
+    <Origin>Howth</Origin>
+    <Destination>Dublin Connolly</Destination>
+    <Origintime>23:55</Origintime>
+    <Destinationtime>00:22</Destinationtime>
+    <Status>No Information</Status>
+    <Lastlocation />
+    <Duein>90</Duein>
+    <Late>0</Late>
+    <Exparrival>23:58</Exparrival>
+    <Expdepart>23:58</Expdepart>
+    <Scharrival>23:58</Scharrival>
+    <Schdepart>23:58</Schdepart>
+    <Direction>Southbound</Direction>
+    <Traintype>DART</Traintype>
+    <Locationtype>S</Locationtype>
+  </objStationData>
+</ArrayOfObjStationData>

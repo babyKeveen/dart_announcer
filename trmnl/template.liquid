@@ -1,0 +1,104 @@
+<!-- TRMNL Custom Plugin Liquid Template for DART Announce -->
+<!-- Copy and paste this directly into your TRMNL Custom Plugin Markup editor -->
+<link rel="stylesheet" href="https://usetrmnl.com/css/latest/plugins.css">
+
+<style>
+  .trmnl-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 26px;
+    margin-top: 10px;
+  }
+  .trmnl-table th {
+    text-align: left;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 2px solid #000;
+    padding: 6px 4px;
+    color: #000;
+  }
+  .trmnl-table th.right {
+    text-align: right;
+  }
+  .trmnl-table td {
+    padding: 8px 4px;
+    border-bottom: 1px solid #000;
+    color: #000;
+  }
+  .trmnl-table td.dest {
+    font-weight: bold;
+  }
+  .trmnl-table td.due {
+    text-align: right;
+    font-weight: 800;
+    font-family: monospace;
+  }
+  .trmnl-table td.time {
+    text-align: right;
+    font-family: monospace;
+  }
+  .due-pill {
+    display: inline-block;
+    padding: 1px 6px;
+    border: 2px solid #000;
+    border-radius: 4px;
+    font-weight: bold;
+  }
+  .empty-msg {
+    text-align: center;
+    font-style: italic;
+    padding: 40px;
+    font-size: 24px;
+  }
+</style>
+
+<div class="screen">
+  <div class="view view--full">
+    <div class="layout layout--col">
+      <!-- Title Bar -->
+      <div class="title_bar">
+        <span class="title font--bold">DART &mdash; {{ station }}{% if direction and direction != "" %} ({{ direction }}){% endif %}</span>
+        {% if rain_chance_percent %}
+          <span class="badge">{{ weather_symbol }} {{ rain_chance_percent }}% rain</span>
+        {% endif %}
+      </div>
+
+      <!-- Departures Table -->
+      <table class="trmnl-table">
+        <thead>
+          <tr>
+            <th>Destination</th>
+            <th class="right">Due</th>
+            <th class="right">Expected</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in departures %}
+            <tr>
+              <td class="dest">{{ d.destination }}</td>
+              <td class="due">
+                {% if d.due_in <= 0 %}
+                  <span class="due-pill">Due</span>
+                {% else %}
+                  {{ d.due_in_text }}
+                {% endif %}
+              </td>
+              <td class="time">{{ d.expected }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="3" class="empty-msg">No upcoming departures found</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <!-- Footer Meta -->
+      <div class="meta" style="margin-top: auto; padding-top: 10px; border-top: 1px solid #000; display: flex; justify-content: space-between;">
+        <span>Station Code: {{ station_code }}</span>
+        <span>Updated: {{ updated_at }}</span>
+      </div>
+    </div>
+  </div>
+</div>
