@@ -224,6 +224,33 @@ public:
         draw_string(WIDTH - fs_w - 4, 110, footer_status, true, 1);
     }
 
+    // Wi-Fi Captive Portal Setup Screen
+    void render_wifi_setup_screen(const std::string& ap_name) {
+        clear(false); // White background
+
+        // 1. Header (Black banner with white text)
+        fill_rect(0, 0, WIDTH, 19, true);
+        draw_string(24, 3, "WI-FI SETUP MODE", false, 2);
+
+        // 2. Body instructions
+        draw_string(8, 26, "1. Connect phone to Wi-Fi:", true, 1);
+
+        // Box around AP name
+        draw_rect(6, 38, WIDTH - 12, 22, true);
+        draw_string(14, 42, ap_name, true, 2);
+
+        draw_string(8, 66, "2. A setup window will pop up.", true, 1);
+        draw_string(8, 78, "   Select Wi-Fi, enter password", true, 1);
+        draw_string(8, 90, "   and choose your station.", true, 1);
+
+        // 3. Footer
+        draw_line(0, 106, WIDTH - 1, 106, true);
+        draw_string(4, 110, "PORTAL: 192.168.4.1", true, 1);
+        std::string portal_hint = "AUTO-AP CONNECT";
+        int ph_w = get_string_width(portal_hint, 1);
+        draw_string(WIDTH - ph_w - 4, 110, portal_hint, true, 1);
+    }
+
     // Export format matching Waveshare 2.13" V2 native RAM (16 bytes * 250 lines)
     // 1 = White, 0 = Black
     void export_waveshare_v2_buffer(uint8_t* out_buf) const {
