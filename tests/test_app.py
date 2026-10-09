@@ -104,6 +104,12 @@ def test_preview_endpoint(monkeypatch):
     assert "plain-header" in response_plain.text
     assert "plain-footer" in response_plain.text
 
+    # Test reverse style
+    response_reverse = client.get("/preview?style=reverse")
+    assert response_reverse.status_code == 200
+    assert "plain-header" in response_reverse.text
+    assert "background: #000" in response_reverse.text
+
 
 def test_terminal_endpoint(monkeypatch):
     monkeypatch.setattr("dart_announce.app.get_departures", lambda settings: _sample_result())
@@ -136,6 +142,10 @@ def test_screen_png_endpoint(monkeypatch):
     assert response_plain.status_code == 200
     assert response_plain.headers["content-type"] == "image/png"
 
+    response_rev = client.get("/screen.png?style=reverse")
+    assert response_rev.status_code == 200
+    assert response_rev.headers["content-type"] == "image/png"
+
 
 def test_screen_bmp_endpoint(monkeypatch):
     monkeypatch.setattr("dart_announce.app.get_departures", lambda settings: _sample_result())
@@ -143,6 +153,10 @@ def test_screen_bmp_endpoint(monkeypatch):
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/bmp"
     assert len(response.content) > 100
+
+    response_rev = client.get("/screen.bmp?style=reverse")
+    assert response_rev.status_code == 200
+    assert response_rev.headers["content-type"] == "image/bmp"
 
 
 def test_screen_bin_endpoint(monkeypatch):
@@ -159,6 +173,10 @@ def test_screen_bin_endpoint(monkeypatch):
     response_plain = client.get("/screen.bin?style=plain")
     assert response_plain.status_code == 200
     assert len(response_plain.content) == 48000
+
+    response_rev = client.get("/screen.bin?style=reverse")
+    assert response_rev.status_code == 200
+    assert len(response_rev.content) == 48000
 
 
 def test_fonts_endpoint():

@@ -19,11 +19,13 @@ else:
     load_dotenv()
 
 VALID_DIRECTIONS = {"Northbound", "Southbound"}
-VALID_STYLES = {"solari", "matrix", "plain"}
+VALID_STYLES = {"solari", "matrix", "plain", "reverse"}
 STYLE_ALIASES = {
     "dotmatrix": "matrix",
     "dot_matrix": "matrix",
     "modern": "matrix",  # migration fallback for deprecated modern style
+    "inverted": "reverse",
+    "dark": "reverse",
 }
 
 

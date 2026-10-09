@@ -107,7 +107,7 @@ def terminal(
 @app.get("/screen.png")
 def screen_png(
     battery: int | None = Query(default=None, ge=0, le=100, description="Battery percentage (0-100)"),
-    style: str | None = Query(default=None, description="Display style: solari, matrix, plain"),
+    style: str | None = Query(default=None, description="Display style: solari, matrix, plain, reverse"),
 ) -> Response:
     """Return an 800x480 1-bit monochrome PNG image for e-paper displays."""
     settings = load_settings()
@@ -120,7 +120,7 @@ def screen_png(
 @app.get("/screen.bmp")
 def screen_bmp(
     battery: int | None = Query(default=None, ge=0, le=100, description="Battery percentage (0-100)"),
-    style: str | None = Query(default=None, description="Display style: solari, matrix, plain"),
+    style: str | None = Query(default=None, description="Display style: solari, matrix, plain, reverse"),
 ) -> Response:
     """Return an 800x480 1-bit monochrome Windows BMP image for e-paper displays."""
     settings = load_settings()
@@ -134,7 +134,7 @@ def screen_bmp(
 def screen_bin(
     battery: int | None = Query(default=None, ge=0, le=100, description="Battery percentage (0-100)"),
     invert: bool = Query(default=False, description="Invert bit polarity (0=white, 1=black)"),
-    style: str | None = Query(default=None, description="Display style: solari, matrix, plain"),
+    style: str | None = Query(default=None, description="Display style: solari, matrix, plain, reverse"),
 ) -> Response:
     """Return an exact 48,000-byte raw 1-bit framebuffer for Waveshare 7.5inch e-paper displays."""
     settings = load_settings()
@@ -555,7 +555,7 @@ def _preview_plain(result, heading: str, invert: bool = False) -> str:
 @app.get("/preview", response_class=HTMLResponse)
 def preview(
     invert: bool = Query(default=False, description="Invert colors for dark display"),
-    style: str | None = Query(default=None, description="Display style: solari, matrix, plain"),
+    style: str | None = Query(default=None, description="Display style: solari, matrix, plain, reverse"),
 ) -> HTMLResponse:
     settings = load_settings()
     result = get_departures(settings)
@@ -565,7 +565,9 @@ def preview(
         heading += f" ({settings.direction})"
 
     active_style = (style or settings.display_style).strip().lower()
-    if active_style in ("matrix", "dotmatrix", "modern"):
+    if active_style in ("reverse", "inverted", "dark"):
+        html = _preview_plain(result, heading, invert=True)
+    elif active_style in ("matrix", "dotmatrix", "modern"):
         html = _preview_matrix(result, heading, invert=invert)
     elif active_style == "plain":
         html = _preview_plain(result, heading, invert=invert)

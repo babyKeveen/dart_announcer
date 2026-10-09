@@ -68,6 +68,18 @@ def test_load_settings_display_style(monkeypatch):
     settings_plain = config.load_settings()
     assert settings_plain.display_style == "plain"
 
+    monkeypatch.setenv("DISPLAY_STYLE", "reverse")
+    settings_reverse = config.load_settings()
+    assert settings_reverse.display_style == "reverse"
+
+    monkeypatch.setenv("DISPLAY_STYLE", "inverted")
+    settings_inverted = config.load_settings()
+    assert settings_inverted.display_style == "reverse"
+
+    monkeypatch.setenv("DISPLAY_STYLE", "dark")
+    settings_dark = config.load_settings()
+    assert settings_dark.display_style == "reverse"
+
     monkeypatch.setenv("DISPLAY_STYLE", "unknown_style")
     with pytest.raises(config.InvalidSettingsError, match="DISPLAY_STYLE must be one of"):
         config.load_settings()

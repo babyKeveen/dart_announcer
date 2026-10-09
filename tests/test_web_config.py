@@ -100,6 +100,22 @@ def test_save_form_redirect(monkeypatch, tmp_path):
     assert loaded.direction == "Southbound"
     assert loaded.display_style == "plain"
 
+    # Test reverse style saving
+    response_rev = client.post(
+        "/save",
+        data={
+            "station": "Bray",
+            "direction": "Southbound",
+            "display_style": "reverse",
+            "num_mins": 90,
+            "max_departures": 5,
+        },
+        follow_redirects=False,
+    )
+    assert response_rev.status_code == 303
+    loaded_rev = config.load_settings()
+    assert loaded_rev.display_style == "reverse"
+
 
 def test_index_page_render(monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
@@ -116,6 +132,7 @@ def test_index_page_render(monkeypatch, tmp_path):
     assert "Solari di Udine" in response.text
     assert "Dot Matrix Indicator" in response.text
     assert "Plain Minimalist" in response.text
+    assert "Reverse Contrast" in response.text
     assert "Ultra-Modern" not in response.text
     assert "Sutton (SUTTN)" in response.text
     assert "Live Departure Board Preview (Port 8000)" in response.text

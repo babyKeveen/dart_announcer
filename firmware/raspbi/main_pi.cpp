@@ -40,6 +40,7 @@ int main(int argc, char* argv[]) {
     std::string xml_file = "";
     bool save_bmp = true;
     bool save_bin = true;
+    bool invert = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -51,12 +52,15 @@ int main(int argc, char* argv[]) {
             battery = std::atoi(argv[++i]);
         } else if (arg == "--file" && i + 1 < argc) {
             xml_file = argv[++i];
+        } else if (arg == "--invert" || arg == "--reverse") {
+            invert = true;
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: ./dart_sim [options]\n"
                       << "  --station <code>     Station code (default: SUTTN)\n"
                       << "  --direction <dir>    Direction filter: Northbound, Southbound, or empty (Both)\n"
                       << "  --battery <pct>      Simulated battery percentage (default: 88)\n"
                       << "  --file <path>        Use local XML fixture instead of live API\n"
+                      << "  --reverse / --invert Invert canvas (white text on black canvas)\n"
                       << "  --help               Show this message\n";
             return 0;
         }
@@ -100,6 +104,9 @@ int main(int argc, char* argv[]) {
     // 2. Render to shared 250x122 canvas
     dart::Canvas canvas;
     canvas.render_commute_board(board, battery, direction);
+    if (invert) {
+        canvas.invert_canvas();
+    }
 
     // 3. Print Visual Terminal Preview (ASCII / Unicode blocks)
     std::cout << "[E-Paper 250x122 Visual Simulation]:\n";

@@ -25,9 +25,9 @@ class ConfigPayload(BaseModel):
         default="Both",
         description="Direction to filter: Northbound, Southbound, or Both (all trains)",
     )
-    display_style: Literal["solari", "matrix", "plain"] = Field(
+    display_style: Literal["solari", "matrix", "plain", "reverse"] = Field(
         default="solari",
-        description="Display aesthetic: solari (Solari di Udine), matrix (Dot Matrix Indicator), or plain (Plain Minimalist)",
+        description="Display aesthetic: solari (Solari di Udine), matrix (Dot Matrix Indicator), plain (Plain Minimalist), or reverse (Reverse Contrast)",
     )
     num_mins: int = Field(default=90, ge=5, le=90, description="Lookahead minutes (5-90)")
     max_departures: int = Field(default=5, ge=1, le=10, description="Max departures (1-10)")
@@ -416,7 +416,7 @@ def index_page(
   /* Style Button Group */
   .style-grid {{
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 10px;
   }}
   .style-option {{
@@ -569,7 +569,7 @@ def index_page(
 
   @media (max-width: 640px) {{
     .direction-grid {{ grid-template-columns: 1fr; }}
-    .style-grid {{ grid-template-columns: 1fr; }}
+    .style-grid {{ grid-template-columns: repeat(2, 1fr); }}
     .grid-2 {{ grid-template-columns: 1fr; }}
   }}
 </style>
@@ -722,6 +722,15 @@ def index_page(
               <span class="style-icon">📄</span>
               <span class="style-title">Plain Minimalist</span>
               <span class="style-sub">High-contrast tabular grid</span>
+            </div>
+          </label>
+
+          <label class="style-option">
+            <input type="radio" name="display_style" value="reverse" {'checked' if current_style in ('reverse', 'inverted', 'dark') else ''}>
+            <div class="style-card">
+              <span class="style-icon">⬛</span>
+              <span class="style-title">Reverse Contrast</span>
+              <span class="style-sub">High-contrast white on black</span>
             </div>
           </label>
 

@@ -71,6 +71,7 @@ String g_wifi_password = "";
 String g_station_code  = DEFAULT_STATION_CODE;
 String g_direction     = DEFAULT_DIRECTION;
 int    g_num_mins      = DEFAULT_NUM_MINS;
+bool   g_reverse_mode  = false;
 
 // ================== WAVESHARE 2.13" V2 LUT & DRIVER =============
 const unsigned char lut_full_update[] = {
@@ -247,15 +248,17 @@ void loadConfig() {
     g_station_code  = prefs.getString("station", DEFAULT_STATION_CODE);
     g_direction     = prefs.getString("direction", DEFAULT_DIRECTION);
     g_num_mins      = prefs.getInt("num_mins", DEFAULT_NUM_MINS);
+    g_reverse_mode  = prefs.getBool("reverse", false);
     prefs.end();
 }
 
-void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir) {
+void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir, bool reverse) {
     prefs.begin("dart_cfg", false); // Read-write mode
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
     prefs.putString("station", station);
     prefs.putString("direction", dir);
+    prefs.putBool("reverse", reverse);
     prefs.end();
 }
 
@@ -357,6 +360,12 @@ String buildPortalHtml() {
       <option value="Both">Both Directions</option>
     </select>
 
+    <label for="theme">Display Theme</label>
+    <select name="theme" id="theme">
+      <option value="0">Standard (Black on White)</option>
+      <option value="1">Reverse (White on Black)</option>
+    </select>
+
     <button type="submit">💾 Save & Connect</button>
   </form>
   <div class="footer">DART Kitchen Display &bull; Adafruit ESP32-S3</div>
@@ -395,11 +404,12 @@ void startCaptivePortal() {
         String pass = webServer.arg("password");
         String station = webServer.arg("station");
         String dir = webServer.arg("direction");
+        bool reverse = (webServer.arg("theme") == "1");
 
-        Serial.printf("[SETUP] Received: SSID='%s', Station='%s', Dir='%s'\n",
-            ssid.c_str(), station.c_str(), dir.c_str());
+        Serial.printf("[SETUP] Received: SSID='%s', Station='%s', Dir='%s', Reverse=%d\n",
+            ssid.c_str(), station.c_str(), dir.c_str(), reverse ? 1 : 0);
 
-        saveConfig(ssid, pass, station, dir);
+        saveConfig(ssid, pass, station, dir, reverse);
 
         String response = R"rawliteral(
 <!DOCTYPE html>
@@ -546,6 +556,9 @@ void setup() {
 
     dart::Canvas canvas;
     canvas.render_commute_board(board, batPct, g_direction.c_str());
+    if (g_reverse_mode) {
+        canvas.invert_canvas();
+    }
 
     uint8_t epdBuffer[dart::Canvas::EPD_BUFFER_SIZE];
     canvas.export_waveshare_v2_buffer(epdBuffer);

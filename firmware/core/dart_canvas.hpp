@@ -29,6 +29,12 @@ public:
         std::memset(pixels, black ? 1 : 0, sizeof(pixels));
     }
 
+    void invert_canvas() {
+        for (size_t i = 0; i < sizeof(pixels); ++i) {
+            pixels[i] = pixels[i] ? 0 : 1;
+        }
+    }
+
     inline void set_pixel(int x, int y, bool black) {
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
             pixels[y * WIDTH + x] = black ? 1 : 0;

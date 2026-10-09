@@ -3,10 +3,11 @@
 Generates 1-bit monochrome images tailored for the Waveshare 7.5-inch E-Paper HAT
 (800x480) driven by microcontrollers such as the Adafruit ESP32-S3 Feather.
 
-Supports 3 distinct display styles:
-    1. 'solari': Iconic Solari di Udine mechanical split-flap railway station cards.
-    2. 'matrix': Authentic transit Dot Matrix Indicator (DMI) with LED matrix character cells.
-    3. 'plain':  Minimalist, distraction-free high-contrast transit departure grid.
+Supports 4 distinct display styles:
+    1. 'solari':  Iconic Solari di Udine mechanical split-flap railway station cards.
+    2. 'matrix':  Authentic transit Dot Matrix Indicator (DMI) with LED matrix character cells.
+    3. 'plain':   Minimalist, distraction-free high-contrast transit departure grid.
+    4. 'reverse': High-contrast inverted dark mode (white text on black canvas).
 
 Produces:
     - 1-bit PNG: /screen.png
@@ -376,6 +377,96 @@ def _render_plain(
 
 
 # =====================================================================
+# STYLE 4: REVERSE CONTRAST (White on Black Inverted Dark Mode)
+# =====================================================================
+def _render_reverse(
+    result: DeparturesResult,
+    direction: str | None = None,
+    battery: int | None = None,
+) -> Image.Image:
+    img = Image.new("1", (WIDTH, HEIGHT), color=0)
+    draw = ImageDraw.Draw(img)
+
+    f_title = _load_font("Oswald.ttf", 32)
+    f_clock = _load_font("Oswald.ttf", 44)
+    f_sub = _load_font("Oswald.ttf", 16)
+    f_th = _load_font("Oswald.ttf", 16)
+    f_dest = _load_font("Oswald.ttf", 26)
+    f_time = _load_font("Oswald.ttf", 24)
+    f_status = _load_font("Oswald.ttf", 18)
+    f_meta = _load_font("Oswald.ttf", 13)
+
+    # Outer crisp bezel border
+    draw.rectangle([(4, 4), (WIDTH - 5, HEIGHT - 5)], outline=1, width=2)
+
+    # Header
+    heading = f"DART — {result.station_name}"
+    if direction:
+        heading += f" ({direction})"
+    draw.text((20, 16), heading, fill=1, font=f_title)
+
+    now_str = datetime.now().strftime("%H:%M")
+    draw.text((WIDTH - 120, 12), now_str, fill=1, font=f_clock)
+
+    right_offset = WIDTH - 120
+    if battery is not None:
+        draw.text((WIDTH - 210, 24), f"BAT: {battery}%", fill=1, font=f_sub)
+        right_offset = WIDTH - 210
+
+    if result.rain_chance is not None:
+        rain_str = f"Rain: {result.rain_chance}%"
+        f_rain = _load_font("Oswald.ttf", 22)
+        r_bbox = f_rain.getbbox(rain_str)
+        r_w = r_bbox[2] - r_bbox[0]
+        h_bbox = f_title.getbbox(heading)
+        h_w = h_bbox[2] - h_bbox[0]
+        left_bound = 20 + h_w + 16
+        if right_offset - left_bound > r_w:
+            rain_x = left_bound + (right_offset - left_bound - r_w) // 2
+            draw.text((rain_x, 24), rain_str, fill=1, font=f_rain)
+        else:
+            draw.text((right_offset - r_w - 10, 24), rain_str, fill=1, font=f_rain)
+
+    draw.line([(20, 68), (WIDTH - 20, 68)], fill=1, width=2)
+
+    # Column headers
+    y_th = 80
+    draw.text((20, y_th), "DESTINATION", fill=1, font=f_th)
+    draw.text((450, y_th), "DUE", fill=1, font=f_th)
+    draw.text((580, y_th), "EXPECTED", fill=1, font=f_th)
+    draw.text((700, y_th), "STATUS", fill=1, font=f_th)
+    draw.line([(20, y_th + 24), (WIDTH - 20, y_th + 24)], fill=1, width=2)
+
+    # Rows
+    y_start = 114
+    row_h = 60
+
+    if result.departures:
+        for i, d in enumerate(result.departures[:5]):
+            y = y_start + i * row_h
+            draw.text((20, y + 12), d.destination, fill=1, font=f_dest)
+            due_text = "DUE" if d.due_in <= 0 else f"{d.due_in} min"
+            draw.text((450, y + 12), due_text, fill=1, font=f_time)
+            draw.text((580, y + 12), d.expected, fill=1, font=f_time)
+            st = d.status if d.status != "No Information" else "On Time"
+            draw.text((700, y + 14), st, fill=1, font=f_status)
+            draw.line([(20, y + 54), (WIDTH - 20, y + 54)], fill=1, width=1)
+    else:
+        draw.text((260, 240), "No upcoming departures scheduled", fill=1, font=f_title)
+
+    # Footer
+    draw.line([(20, HEIGHT - 26), (WIDTH - 20, HEIGHT - 26)], fill=1, width=1)
+    draw.text((20, HEIGHT - 20), "LIVE IRISH RAIL REAL-TIME DATA  •  REVERSE MONOCHROME", fill=1, font=f_meta)
+    updated_str = f"UPDATED: {datetime.now().strftime('%H:%M:%S')}"
+    up_bbox = f_meta.getbbox(updated_str)
+    up_w = up_bbox[2] - up_bbox[0]
+    draw.text(((WIDTH - up_w) // 2, HEIGHT - 20), updated_str, fill=1, font=f_meta)
+    draw.text((WIDTH - 140, HEIGHT - 20), "ADAFRUIT ESP32-S3", fill=1, font=f_meta)
+
+    return img
+
+
+# =====================================================================
 # MAIN PUBLIC API
 # =====================================================================
 def render_screen_image(
@@ -386,10 +477,12 @@ def render_screen_image(
 ) -> Image.Image:
     """Render the departure board onto an 800x480 1-bit monochrome image (mode '1').
 
-    Supports: 'solari' (split-flap cards), 'matrix' (Dot Matrix Indicator), 'plain' (minimal tabular).
+    Supports: 'solari' (split-flap cards), 'matrix' (Dot Matrix Indicator), 'plain' (minimal tabular), 'reverse' (white on black).
     """
     style_key = (style or "solari").strip().lower()
-    if style_key in ("matrix", "dotmatrix", "modern"):
+    if style_key in ("reverse", "inverted", "dark"):
+        return _render_reverse(result, direction=direction, battery=battery)
+    elif style_key in ("matrix", "dotmatrix", "modern"):
         return _render_matrix(result, direction=direction, battery=battery)
     elif style_key == "plain":
         return _render_plain(result, direction=direction, battery=battery)
