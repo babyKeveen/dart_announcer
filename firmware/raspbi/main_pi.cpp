@@ -1,5 +1,6 @@
 #include "../core/dart_canvas.hpp"
 #include "../core/dart_parser.hpp"
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -11,15 +12,16 @@
 // Helper to execute curl command to fetch live Irish Rail data without external C++ library dependencies
 std::string fetch_url(const std::string& url) {
     std::string cmd = "curl -s -m 10 \"" + url + "\"";
-    std::array<char, 256> buffer;
+    char buffer[256];
     std::string result;
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+    FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
         return "";
     }
-    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-        result += buffer.data();
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result += buffer;
     }
+    pclose(pipe);
     return result;
 }
 
