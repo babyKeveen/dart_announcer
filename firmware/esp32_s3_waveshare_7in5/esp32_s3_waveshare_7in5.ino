@@ -210,6 +210,8 @@ void setup() {
         Serial.println("\n[ERROR] Wi-Fi connection timeout. Deep sleeping...");
         esp_sleep_enable_timer_wakeup(SLEEP_SECONDS * 1000000ULL);
         esp_deep_sleep_start();
+    }
+
     Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
 
     // Enable mDNS resolver for .local hostnames

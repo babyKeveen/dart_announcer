@@ -1,46 +1,62 @@
-# Firmware: Adafruit ESP32-S3 Feather + Waveshare 7.5" E-Paper (800x480)
-## Production Battery-Powered Setup (3.7V 2500mAh LiPo)
+# DART Announce — Dual-Target C++ Embedded Architecture
 
-This firmware runs on an **Adafruit ESP32-S3 Feather** (4MB Flash, 2MB PSRAM) powered by a **3.7V 2500mAh Lithium Ion Polymer battery** and drives a **Waveshare 7.5inch E-Paper HAT (800x480)**.
+This directory houses the C++ embedded software for the **DART Kitchen Commute Display**.
 
----
-
-## 1. Battery Life & Power Architecture
-
-### Power Consumption Breakdown
-* **Active Wi-Fi Download**: ~110 mA for ~1.5 seconds (connect to AP, HTTP GET 48KB buffer).
-* **Wi-Fi Radio Shutdown**: Radio is turned off immediately after receiving the 48KB buffer.
-* **E-Paper Refresh**: ~30 mA for ~2.5 seconds (display controller refresh).
-* **Display Sleep Mode**: ~2 µA (command `0x07, 0xA5` puts the UC8179 into hardware sleep).
-* **ESP32-S3 Deep Sleep**: ~20 µA.
-* **Total Sleep Draw**: ~50 µA (including on-board regulator quiescent current).
-
-### Estimated Battery Runtime (3.7V 2500mAh Battery)
-
-| Refresh Interval | Active Cycles / Hour | Average Current | Estimated Battery Life |
-| :--- | :--- | :--- | :--- |
-| **60 seconds** | 60 | ~4.2 mA | **~24 days** |
-| **90 seconds** (default) | 40 | ~2.8 mA | **~37 days** |
-| **120 seconds** | 30 | ~2.1 mA | **~49 days** |
-| **Schedule-Aware (sleep 00:00–06:00)** | 40 (18 hrs/day) | ~2.1 mA | **~50–60 days** |
+It uses a dual-target architecture with **100% shared core logic**:
+* **`firmware/core/`**: Shared cross-platform C++ engine:
+  - `dart_types.hpp`: Core data structures (`Departure`, `BoardData`).
+  - `dart_parser.hpp`: Lightweight XML parser extracting live Irish Rail departures without external dependencies.
+  - `dart_canvas.hpp`: 250×122 1-bit monochrome graphics engine, bitmap typography, and Waveshare 2.13" V2 buffer serializer.
+  - `dart_font.hpp`: High-legibility 5x7 ASCII bitmap font with integer scaling.
+* **`firmware/raspbi/`**: Fast local simulation & prototyping tool running on Linux / Raspberry Pi OS.
+* **`firmware/esp32/`**: Production standalone battery-powered Arduino sketch for the **Adafruit ESP32-S3 Feather + Waveshare 2.13" V2**.
 
 ---
 
-## 2. Onboard Battery Telemetry
+## Target 1: Raspberry Pi Simulation Tool (`firmware/raspbi`)
 
-The Adafruit ESP32-S3 Feather features an onboard 200k/200k (2:1) voltage divider connected to **GPIO 1 (A13)** to measure LiPo battery voltage.
+Allows rapid testing, layout adjustments, and verification over SSH on the Raspberry Pi without needing the physical e-paper display connected or flashing the Feather over USB.
 
-* **Voltage Range**: `4.2V` (100% full) down to `3.3V` (0% empty).
-* **Automatic Screen Reporting**: The firmware passes `?battery=XX` in the HTTP GET request. The Raspberry Pi server draws a battery indicator icon and percentage directly on the 800x480 e-paper screen.
-* **Low-Voltage Cutoff Protection**: If battery voltage drops below `3.25V`, the ESP32 aborts Wi-Fi transmission and display refresh and enters deep sleep for 1 hour to prevent over-discharging and permanently damaging the LiPo cell.
+### Quick Build & Run (on Raspberry Pi via SSH):
+```bash
+cd ~/dart_announce/firmware/raspbi
+make run
+```
+
+### Options:
+```bash
+# Query a different station (e.g. Connolly):
+./dart_sim --station CNNLY
+
+# Filter by direction:
+./dart_sim --direction Southbound
+
+# Test with a local XML fixture instead of live network:
+./dart_sim --file ../../fixtures/sutton_sample.xml
+
+# Simulate specific battery percentage:
+./dart_sim --battery 45
+```
+
+### Output:
+1. **ASCII/Unicode Visual Screen**: Renders the exact 250×122 e-paper screen directly inside your SSH terminal using half-block characters (`█`, `▀`, `▄`).
+2. **`preview_2in13.bmp`**: Saves a 1-bit uncompressed 250×122 Windows BMP image for inspection.
+3. **`screen_2in13.bin`**: Saves the exact 4,000-byte raw hardware buffer sent to the Waveshare panel.
 
 ---
 
-## 3. Wiring Diagram
+## Target 2: Standalone Kitchen Display (`firmware/esp32`)
 
-Connect the 8-pin connector of the Waveshare 7.5" E-Paper HAT to the Adafruit ESP32-S3 Feather:
+The production wall-mounted device:
+* **Microcontroller**: Adafruit ESP32-S3 Feather (4MB Flash, 2MB PSRAM)
+* **Display**: Waveshare 2.13-inch E-Paper V2 (250×122, SSD1675 / SSD1680)
+* **Power**: 3.7V 2500mAh LiPo / Li-ion battery (recharged via Feather's USB-C port)
 
-| Waveshare 7.5" Pin | Cable Color | Adafruit ESP32-S3 Feather Pin | Description |
+### Pin Connections (Adafruit Feather &rarr; Waveshare 2.13" V2)
+
+Connect the 8-pin connector of the Waveshare 2.13" HAT/cable to the Adafruit ESP32-S3 Feather:
+
+| Waveshare 2.13" Pin | Cable Color | Adafruit ESP32-S3 Feather Pin | Description |
 | :--- | :--- | :--- | :--- |
 | **VCC** | Red | **3V** (3.3V) | Power |
 | **GND** | Black | **GND** | Ground |
@@ -50,31 +66,36 @@ Connect the 8-pin connector of the Waveshare 7.5" E-Paper HAT to the Adafruit ES
 | **DC** | Green | **D9** (GPIO 9) | Data / Command |
 | **RST** | White | **D6** (GPIO 6) | Hardware Reset |
 | **BUSY** | Purple | **D5** (GPIO 5) | Busy Status |
-| *Internal* | - | **A13** (GPIO 1) | Onboard VBAT Divider (Monitored internally) |
+| *Internal* | - | **A13** (GPIO 1) | Onboard VBAT 200k/200k Divider (internal) |
 
 ---
 
-## 4. Arduino IDE Setup
+### Flashing via Arduino IDE
 
-1. **Install ESP32 Board Support**:
-   - `Tools -> Board -> Boards Manager...`
-   - Install `esp32` by Espressif Systems (version `2.0.x` or `3.x`).
-2. **Select Board**:
-   - `Tools -> Board -> ESP32 -> Adafruit Feather ESP32-S3 2MB PSRAM`
-3. **Board Settings**:
-   - **Flash Size**: `4MB (32Mb)`
-   - **PSRAM**: `OPI PSRAM` (or `Enabled`)
+1. Open `firmware/esp32/esp32_dart_display.ino` in **Arduino IDE**.
+2. Select Board: **Tools &rarr; Board &rarr; esp32 &rarr; Adafruit Feather ESP32-S3 2MB PSRAM**
+3. Select Port: **`COM7`** (or your active serial port)
+4. Settings:
    - **Upload Speed**: `921600`
    - **USB CDC On Boot**: `Enabled`
-4. **Configure Code**:
-   - Open `esp32_s3_waveshare_7in5.ino`
-   - Set `WIFI_SSID` and `WIFI_PASSWORD`.
-   - Set `SERVER_BASE_URL` to your Raspberry Pi's local hostname (or fallback IP):
-     ```cpp
-     const char* SERVER_BASE_URL = "http://raspi2modelb2014.local:8000/screen.bin";
-     // Fallback if mDNS is not supported: "http://192.168.86.28:8000/screen.bin"
-     ```
-5. **Flash & Run**:
-   - Connect the Feather via USB-C and click **Upload**.
-   - Connect the 3.7V 2500mAh LiPo battery to the Feather's JST battery jack.
-   - The on-board battery charger will automatically recharge the battery whenever USB-C is plugged in!
+5. Configure your Wi-Fi credentials in lines 39-40:
+   ```cpp
+   const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+   const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+   ```
+6. Click **Upload**.
+
+---
+
+## Power & Battery Optimization Architecture
+
+* **Active Cycle**: ~1.2 seconds total (Wi-Fi connect & XML download).
+* **Wi-Fi Radio Shutdown**: Radio is turned off immediately after receiving the XML string, saving ~100mA during display refresh.
+* **Display Sleep**: Panel enters hardware deep sleep (`0x10, 0x01`) drawing ~2µA.
+* **ESP32 Deep Sleep**: Microcontroller draws ~20µA in deep sleep.
+* **Commute-Aware Timing**:
+  - **Morning Peak (06:30 – 09:30)**: 90-second refresh.
+  - **Evening Peak (16:30 – 19:30)**: 90-second refresh.
+  - **Off-Peak (Daytime)**: 5-minute refresh.
+  - **Overnight (23:00 – 06:30)**: 30-minute sleep (zero screen flash while asleep).
+* **Estimated Runtime**: **2 to 3+ months** on a single charge of a 2500mAh LiPo cell.
