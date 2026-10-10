@@ -72,6 +72,9 @@ String g_station_code  = DEFAULT_STATION_CODE;
 String g_direction     = DEFAULT_DIRECTION;
 int    g_num_mins      = DEFAULT_NUM_MINS;
 bool   g_reverse_mode  = false;
+bool   g_schedule_enabled   = true;
+int    g_schedule_start_hour = 6;   // 6 AM
+int    g_schedule_end_hour   = 19;  // 7 PM
 
 // ================== WAVESHARE 2.13" V2 LUT & DRIVER =============
 const unsigned char lut_full_update[] = {
@@ -227,6 +230,9 @@ int calculateBatteryPercentage(float voltage) {
 uint32_t calculateSleepSeconds(const std::string& query_time) {
     if (query_time.length() >= 2) {
         int hour = std::atoi(query_time.substr(0, 2).c_str());
+        if (g_schedule_enabled && (hour < g_schedule_start_hour || hour >= g_schedule_end_hour)) {
+            return 1800; // 30 mins standby sleep during scheduled down hours
+        }
         if (hour >= 6 && hour < 10) {
             return COMMUTE_REFRESH_SECONDS;
         }
@@ -243,22 +249,28 @@ uint32_t calculateSleepSeconds(const std::string& query_time) {
 // ======================== NVS CONFIG STORAGE =======================
 void loadConfig() {
     prefs.begin("dart_cfg", true); // Read-only mode
-    g_wifi_ssid     = prefs.getString("ssid", "");
-    g_wifi_password = prefs.getString("pass", "");
-    g_station_code  = prefs.getString("station", DEFAULT_STATION_CODE);
-    g_direction     = prefs.getString("direction", DEFAULT_DIRECTION);
-    g_num_mins      = prefs.getInt("num_mins", DEFAULT_NUM_MINS);
-    g_reverse_mode  = prefs.getBool("reverse", false);
+    g_wifi_ssid           = prefs.getString("ssid", "");
+    g_wifi_password       = prefs.getString("pass", "");
+    g_station_code        = prefs.getString("station", DEFAULT_STATION_CODE);
+    g_direction           = prefs.getString("direction", DEFAULT_DIRECTION);
+    g_num_mins            = prefs.getInt("num_mins", DEFAULT_NUM_MINS);
+    g_reverse_mode        = prefs.getBool("reverse", false);
+    g_schedule_enabled    = prefs.getBool("sched_en", true);
+    g_schedule_start_hour = prefs.getInt("sched_start", 6);
+    g_schedule_end_hour   = prefs.getInt("sched_end", 19);
     prefs.end();
 }
 
-void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir, bool reverse) {
+void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir, bool reverse, bool sched_en, int sched_start, int sched_end) {
     prefs.begin("dart_cfg", false); // Read-write mode
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
     prefs.putString("station", station);
     prefs.putString("direction", dir);
     prefs.putBool("reverse", reverse);
+    prefs.putBool("sched_en", sched_en);
+    prefs.putInt("sched_start", sched_start);
+    prefs.putInt("sched_end", sched_end);
     prefs.end();
 }
 
@@ -366,6 +378,12 @@ String buildPortalHtml() {
       <option value="1">Reverse (White on Black)</option>
     </select>
 
+    <label for="sched_en">Smart Scheduler</label>
+    <select name="sched_en" id="sched_en">
+      <option value="1">Enabled (Clock & Weather 7pm - 6am)</option>
+      <option value="0">Disabled (Always Live Trains)</option>
+    </select>
+
     <button type="submit">💾 Save & Connect</button>
   </form>
   <div class="footer">DART Kitchen Display &bull; Adafruit ESP32-S3</div>
@@ -405,11 +423,12 @@ void startCaptivePortal() {
         String station = webServer.arg("station");
         String dir = webServer.arg("direction");
         bool reverse = (webServer.arg("theme") == "1");
+        bool sched_en = (webServer.arg("sched_en") != "0");
 
-        Serial.printf("[SETUP] Received: SSID='%s', Station='%s', Dir='%s', Reverse=%d\n",
-            ssid.c_str(), station.c_str(), dir.c_str(), reverse ? 1 : 0);
+        Serial.printf("[SETUP] Received: SSID='%s', Station='%s', Dir='%s', Reverse=%d, Sched=%d\n",
+            ssid.c_str(), station.c_str(), dir.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0);
 
-        saveConfig(ssid, pass, station, dir, reverse);
+        saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19);
 
         String response = R"rawliteral(
 <!DOCTYPE html>
@@ -555,7 +574,13 @@ void setup() {
     }
 
     dart::Canvas canvas;
-    canvas.render_commute_board(board, batPct, g_direction.c_str());
+    int curHour = board.query_time.length() >= 2 ? std::atoi(board.query_time.substr(0, 2).c_str()) : 12;
+    if (g_schedule_enabled && (curHour < g_schedule_start_hour || curHour >= g_schedule_end_hour)) {
+        Serial.println("[Schedule] Down period active! Rendering Standby Clock & Tomorrow's Weather.");
+        canvas.render_clock_weather_screen(board.station_name, board.query_time, "NIGHT STANDBY", 15, 9, 50, batPct, g_schedule_start_hour);
+    } else {
+        canvas.render_commute_board(board, batPct, g_direction.c_str());
+    }
     if (g_reverse_mode) {
         canvas.invert_canvas();
     }

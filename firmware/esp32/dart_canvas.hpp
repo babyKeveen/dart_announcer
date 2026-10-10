@@ -230,6 +230,88 @@ public:
         draw_string(WIDTH - fs_w - 4, 110, footer_status, true, 1);
     }
 
+    // Scheduled Down Period: Clock & Tomorrow's Weather Screen (250x122)
+    void render_clock_weather_screen(
+        const std::string& station_name,
+        const std::string& time_str,
+        const std::string& date_str,
+        int temp_max,
+        int temp_min,
+        int rain_chance,
+        int battery_percent = -1,
+        int resume_hour = 6
+    ) {
+        clear(false); // White background
+
+        // 1. Header (Black banner with white text)
+        fill_rect(0, 0, WIDTH, 19, true);
+        std::string title = station_name + " STANDBY";
+        std::transform(title.begin(), title.end(), title.begin(), ::toupper);
+        if (title.length() > 16) title = title.substr(0, 15) + ".";
+        draw_string(4, 3, title, false, 2);
+
+        // Battery on top-right
+        if (battery_percent >= 0) {
+            draw_battery(WIDTH - 24, 5, battery_percent);
+        }
+
+        // 2. Main split: Big Digital Clock (left) & Tomorrow's Forecast (right)
+        // Clock at scale 3 (15x21 per char)
+        std::string clk = time_str.empty() ? "23:45" : time_str;
+        draw_string(6, 26, clk, true, 3);
+
+        // Date below clock
+        std::string dt = date_str.empty() ? "NIGHT MODE" : date_str;
+        draw_string(8, 54, dt, true, 1);
+
+        // Schedule status note below date
+        char sched_buf[32];
+        snprintf(sched_buf, sizeof(sched_buf), "RESUMES %02d:00 AM", resume_hour);
+        draw_rect(6, 68, 106, 18, true);
+        draw_string(10, 73, sched_buf, true, 1);
+
+        draw_string(8, 92, "LOW POWER SLEEP", true, 1);
+
+        // Vertical divider separating clock from weather
+        draw_line(120, 21, 120, 104, true);
+
+        // Right side: Tomorrow's Weather
+        fill_rect(124, 23, WIDTH - 128, 14, true);
+        draw_string(128, 26, "TOMORROW WEATHER", false, 1);
+
+        // Temperature (scale 2)
+        char temp_buf[32];
+        snprintf(temp_buf, sizeof(temp_buf), "%dC / %dC", temp_max, temp_min);
+        draw_string(128, 42, temp_buf, true, 2);
+
+        // Rain badge (inverted if rain >= 40%)
+        char rain_buf[32];
+        snprintf(rain_buf, sizeof(rain_buf), "RAIN: %d%%", rain_chance);
+        int rw = get_string_width(rain_buf, 1);
+        if (rain_chance >= 40) {
+            fill_rect(126, 63, rw + 8, 16, true);
+            draw_string(130, 67, rain_buf, false, 1);
+        } else {
+            draw_rect(126, 63, rw + 8, 16, true);
+            draw_string(130, 67, rain_buf, true, 1);
+        }
+
+        // Commuter advice
+        if (rain_chance >= 40) {
+            draw_string(126, 83, "BRING UMBRELLA", true, 1);
+        } else {
+            draw_string(126, 83, "CLEAR COMMUTE", true, 1);
+        }
+        draw_string(126, 94, "DART NORMAL", true, 1);
+
+        // 3. Footer Bar
+        draw_line(0, 106, WIDTH - 1, 106, true);
+        draw_string(4, 110, "STANDBY CLOCK", true, 1);
+        std::string footer_status = "OPEN-METEO ENGINE";
+        int fs_w = get_string_width(footer_status, 1);
+        draw_string(WIDTH - fs_w - 4, 110, footer_status, true, 1);
+    }
+
     // Wi-Fi Captive Portal Setup Screen
     void render_wifi_setup_screen(const std::string& ap_name) {
         clear(false); // White background

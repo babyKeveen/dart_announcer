@@ -41,6 +41,7 @@ int main(int argc, char* argv[]) {
     bool save_bmp = true;
     bool save_bin = true;
     bool invert = false;
+    bool clock_mode = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -52,6 +53,11 @@ int main(int argc, char* argv[]) {
             battery = std::atoi(argv[++i]);
         } else if (arg == "--file" && i + 1 < argc) {
             xml_file = argv[++i];
+        } else if (arg == "--clock" || arg == "--standby") {
+            clock_mode = true;
+        } else if (arg == "--mode" && i + 1 < argc) {
+            std::string m = argv[++i];
+            if (m == "clock" || m == "standby") clock_mode = true;
         } else if (arg == "--invert" || arg == "--reverse") {
             invert = true;
         } else if (arg == "--help" || arg == "-h") {
@@ -60,6 +66,7 @@ int main(int argc, char* argv[]) {
                       << "  --direction <dir>    Direction filter: Northbound, Southbound, or empty (Both)\n"
                       << "  --battery <pct>      Simulated battery percentage (default: 88)\n"
                       << "  --file <path>        Use local XML fixture instead of live API\n"
+                      << "  --clock              Simulate night standby clock & tomorrow's weather screen\n"
                       << "  --reverse / --invert Invert canvas (white text on black canvas)\n"
                       << "  --help               Show this message\n";
             return 0;
@@ -103,7 +110,12 @@ int main(int argc, char* argv[]) {
 
     // 2. Render to shared 250x122 canvas
     dart::Canvas canvas;
-    canvas.render_commute_board(board, battery, direction);
+    if (clock_mode) {
+        std::cout << "[Mode] Rendering Down-Period Night Standby Clock & Tomorrow's Weather\n";
+        canvas.render_clock_weather_screen(board.station_name, "23:45", "SAT 11 OCT", 15, 9, 50, battery, 6);
+    } else {
+        canvas.render_commute_board(board, battery, direction);
+    }
     if (invert) {
         canvas.invert_canvas();
     }

@@ -467,6 +467,115 @@ def _render_reverse(
 
 
 # =====================================================================
+# SCHEDULED DOWN PERIOD: CLOCK & TOMORROW'S WEATHER
+# =====================================================================
+def _render_clock_weather(
+    result: DeparturesResult,
+    battery: int | None = None,
+    invert: bool = False,
+    resume_hour: int = 6,
+) -> Image.Image:
+    bg_color = 0 if invert else 1
+    fg_color = 1 if invert else 0
+    img = Image.new("1", (WIDTH, HEIGHT), color=bg_color)
+    draw = ImageDraw.Draw(img)
+
+    f_title = _load_font("Oswald.ttf", 26)
+    f_sub = _load_font("Oswald.ttf", 15)
+    f_clock_huge = _load_font("BebasNeue.ttf", 116)
+    f_date = _load_font("Oswald.ttf", 22)
+    f_card_head = _load_font("BebasNeue.ttf", 24)
+    f_cond = _load_font("Oswald.ttf", 26)
+    f_temp = _load_font("Oswald.ttf", 22)
+    f_badge = _load_font("BebasNeue.ttf", 24)
+    f_body = _load_font("Oswald.ttf", 15)
+    f_meta = _load_font("Oswald.ttf", 13)
+
+    # Double chassis outline
+    draw.rectangle([(6, 6), (WIDTH - 7, HEIGHT - 7)], outline=fg_color, width=2)
+    draw.rectangle([(10, 10), (WIDTH - 11, HEIGHT - 11)], outline=fg_color, width=1)
+
+    now = datetime.now()
+    now_str = now.strftime("%H:%M")
+    date_str = now.strftime("%A, %d %B %Y").upper()
+
+    # Header Bar
+    heading = f"DART  •  {result.station_name.upper()}  •  NIGHT STANDBY"
+    draw.text((22, 18), heading, fill=fg_color, font=f_title)
+
+    right_label = f"STANDBY  •  RESUMES {resume_hour:02d}:00"
+    if battery is not None:
+        right_label = f"BAT: {battery}%  |  " + right_label
+    rl_bbox = f_sub.getbbox(right_label)
+    rl_w = rl_bbox[2] - rl_bbox[0]
+    draw.text((WIDTH - 24 - rl_w, 24), right_label, fill=fg_color, font=f_sub)
+
+    draw.line([(12, 56), (WIDTH - 13, 56)], fill=fg_color, width=2)
+
+    # Left Column: Huge Clock & Schedule Card (X: 16 to 376)
+    draw.text((28, 70), now_str, fill=fg_color, font=f_clock_huge)
+    draw.text((32, 195), date_str, fill=fg_color, font=f_date)
+
+    # Schedule status card
+    box_sched = [(28, 245), (375, 420)]
+    draw.rectangle(box_sched, outline=fg_color, width=1)
+    # Mini header tab
+    draw.rectangle([(28, 245), (375, 275)], fill=fg_color)
+    draw.text((38, 252), "ACTIVE SCHEDULE STATUS", fill=bg_color, font=f_sub)
+    draw.text((38, 288), f"• Commute window: {resume_hour:02d}:00 – 19:00", fill=fg_color, font=f_body)
+    draw.text((38, 318), "• Status: Down Period (Night Mode)", fill=fg_color, font=f_body)
+    draw.text((38, 348), "• Refresh: Low-power battery conservation", fill=fg_color, font=f_body)
+    draw.text((38, 378), f"• Monitored Station: {result.station_name} ({result.station_code})", fill=fg_color, font=f_body)
+
+    # Center vertical divider
+    draw.line([(390, 68), (390, 425)], fill=fg_color, width=1)
+
+    # Right Column: Tomorrow's Forecast (X: 405 to WIDTH - 20)
+    card_w_right = WIDTH - 20
+    draw.rectangle([(405, 75), (card_w_right, 420)], outline=fg_color, width=2)
+    # Header bar
+    draw.rectangle([(405, 75), (card_w_right, 115)], fill=fg_color)
+    draw.text((420, 84), "TOMORROW'S COMMUTE FORECAST", fill=bg_color, font=f_card_head)
+
+    tw = result.tomorrow_weather
+    if tw is not None:
+        cond_text = f"{tw.symbol} {tw.condition.upper()}"
+        draw.text((420, 130), cond_text, fill=fg_color, font=f_cond)
+
+        temp_text = f"HIGH: {tw.temp_max:.1f}°C    |    LOW: {tw.temp_min:.1f}°C"
+        draw.text((420, 178), temp_text, fill=fg_color, font=f_temp)
+
+        # Precipitation gauge badge
+        badge_box = [(420, 225), (card_w_right - 15, 285)]
+        draw.rectangle(badge_box, fill=fg_color)
+        rain_label = f"PRECIPITATION PROBABILITY: {tw.rain_chance}%"
+        draw.text((435, 242), rain_label, fill=bg_color, font=f_badge)
+
+        # Commuter Advice tip
+        draw.text((420, 310), "COMMUTE PREPARATION:", fill=fg_color, font=f_sub)
+        if tw.rain_chance >= 40:
+            tip = "Heavy rain expected — pack an umbrella"
+        elif tw.rain_chance >= 20:
+            tip = "Light rain showers possible during commute"
+        else:
+            tip = "Dry & clear conditions expected for morning commute"
+        draw.text((420, 338), tip, fill=fg_color, font=f_body)
+
+        date_formatted = f"Forecast Date: {tw.date_str}"
+        draw.text((420, 385), date_formatted, fill=fg_color, font=f_meta)
+    else:
+        draw.text((425, 140), "Tomorrow's weather forecast unavailable", fill=fg_color, font=f_body)
+        draw.text((425, 175), "Open-Meteo offline or station coordinates missing", fill=fg_color, font=f_meta)
+
+    # Footer
+    draw.line([(12, 440), (WIDTH - 13, 440)], fill=fg_color, width=1)
+    draw.text((22, 448), "LIVE IRISH RAIL REAL-TIME DATA  •  OPEN-METEO WEATHER ENGINE", fill=fg_color, font=f_meta)
+    draw.text((WIDTH - 210, 448), f"UPDATED: {now.strftime('%H:%M:%S')}", fill=fg_color, font=f_meta)
+
+    return img
+
+
+# =====================================================================
 # MAIN PUBLIC API
 # =====================================================================
 def render_screen_image(
@@ -474,13 +583,19 @@ def render_screen_image(
     direction: str | None = None,
     battery: int | None = None,
     style: str = "solari",
+    mode: str = "auto",
+    is_active: bool = True,
+    resume_hour: int = 6,
 ) -> Image.Image:
-    """Render the departure board onto an 800x480 1-bit monochrome image (mode '1').
-
-    Supports: 'solari' (split-flap cards), 'matrix' (Dot Matrix Indicator), 'plain' (minimal tabular), 'reverse' (white on black).
-    """
+    """Render the departure board or down-period clock with tomorrow's weather onto 800x480 monochrome image."""
     style_key = (style or "solari").strip().lower()
-    if style_key in ("reverse", "inverted", "dark"):
+    is_reverse = style_key in ("reverse", "inverted", "dark")
+
+    # If clock mode forced or in down period under auto mode
+    if mode == "clock" or (mode == "auto" and not is_active):
+        return _render_clock_weather(result, battery=battery, invert=is_reverse, resume_hour=resume_hour)
+
+    if is_reverse:
         return _render_reverse(result, direction=direction, battery=battery)
     elif style_key in ("matrix", "dotmatrix", "modern"):
         return _render_matrix(result, direction=direction, battery=battery)
@@ -494,9 +609,20 @@ def render_screen_png(
     direction: str | None = None,
     battery: int | None = None,
     style: str = "solari",
+    mode: str = "auto",
+    is_active: bool = True,
+    resume_hour: int = 6,
 ) -> bytes:
-    """Return PNG bytes of the 800x480 departure board in chosen style."""
-    img = render_screen_image(result, direction=direction, battery=battery, style=style)
+    """Return PNG bytes of the 800x480 departure board or clock in chosen style."""
+    img = render_screen_image(
+        result,
+        direction=direction,
+        battery=battery,
+        style=style,
+        mode=mode,
+        is_active=is_active,
+        resume_hour=resume_hour,
+    )
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -507,9 +633,20 @@ def render_screen_bmp(
     direction: str | None = None,
     battery: int | None = None,
     style: str = "solari",
+    mode: str = "auto",
+    is_active: bool = True,
+    resume_hour: int = 6,
 ) -> bytes:
-    """Return 1-bit Windows BMP bytes of the 800x480 departure board in chosen style."""
-    img = render_screen_image(result, direction=direction, battery=battery, style=style)
+    """Return 1-bit Windows BMP bytes of the 800x480 departure board or clock in chosen style."""
+    img = render_screen_image(
+        result,
+        direction=direction,
+        battery=battery,
+        style=style,
+        mode=mode,
+        is_active=is_active,
+        resume_hour=resume_hour,
+    )
     buf = io.BytesIO()
     img.save(buf, format="BMP")
     return buf.getvalue()
@@ -521,9 +658,20 @@ def render_screen_raw(
     battery: int | None = None,
     invert: bool = False,
     style: str = "solari",
+    mode: str = "auto",
+    is_active: bool = True,
+    resume_hour: int = 6,
 ) -> bytes:
     """Return exact 48,000 bytes (800x480 / 8) raw 1-bit buffer in chosen style."""
-    img = render_screen_image(result, direction=direction, battery=battery, style=style)
+    img = render_screen_image(
+        result,
+        direction=direction,
+        battery=battery,
+        style=style,
+        mode=mode,
+        is_active=is_active,
+        resume_hour=resume_hour,
+    )
     raw = img.tobytes()
     if invert:
         return bytes(~b & 0xFF for b in raw)

@@ -65,6 +65,7 @@ def test_trmnl_endpoint(monkeypatch):
 
 def test_preview_endpoint(monkeypatch):
     monkeypatch.setenv("DISPLAY_STYLE", "solari")
+    monkeypatch.setattr("dart_announce.config.Settings.is_active_hours", lambda self, now=None: True)
     mock_result = DeparturesResult(
         station_name="Sutton",
         station_code="SUTTN",
@@ -241,3 +242,47 @@ def test_unknown_station_error_handler(monkeypatch):
     response = client.get("/departures")
     assert response.status_code == 400
     assert "No station" in response.json()["error"]
+
+
+def test_preview_clock_mode(monkeypatch):
+    monkeypatch.setattr("dart_announce.app.get_departures", lambda settings: _sample_result())
+
+    response = client.get("/preview?mode=clock")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "NIGHT STANDBY" in response.text
+    assert "TOMORROW" in response.text
+
+    # Invert clock preview
+    response_inv = client.get("/preview?mode=clock&invert=true")
+    assert response_inv.status_code == 200
+    assert "background: #000" in response_inv.text
+
+
+def test_preview_auto_mode_down_hours(monkeypatch):
+    monkeypatch.setattr("dart_announce.app.get_departures", lambda settings: _sample_result())
+    monkeypatch.setattr("dart_announce.config.Settings.is_active_hours", lambda self, now=None: False)
+
+    response = client.get("/preview?mode=auto")
+    assert response.status_code == 200
+    assert "NIGHT STANDBY" in response.text
+
+
+def test_screen_endpoints_clock_mode(monkeypatch):
+    monkeypatch.setattr("dart_announce.app.get_departures", lambda settings: _sample_result())
+
+    resp_png = client.get("/screen.png?mode=clock")
+    assert resp_png.status_code == 200
+    assert resp_png.headers["content-type"] == "image/png"
+    assert len(resp_png.content) > 100
+
+    resp_bmp = client.get("/screen.bmp?mode=clock")
+    assert resp_bmp.status_code == 200
+    assert resp_bmp.headers["content-type"] == "image/bmp"
+    assert len(resp_bmp.content) > 100
+
+    resp_bin = client.get("/screen.bin?mode=clock")
+    assert resp_bin.status_code == 200
+    assert resp_bin.headers["content-type"] == "application/octet-stream"
+    assert len(resp_bin.content) == 48000
+

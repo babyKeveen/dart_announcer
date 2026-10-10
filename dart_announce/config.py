@@ -1,6 +1,7 @@
 """Environment-driven settings for which station/direction to show and how far ahead to look."""
 
 import os
+from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -41,6 +42,22 @@ class Settings:
     max_departures: int
     trmnl_webhook_url: str | None = None
     display_style: str = "solari"
+    schedule_enabled: bool = True
+    schedule_start_hour: int = 6  # 6:00 AM
+    schedule_end_hour: int = 19   # 7:00 PM (19:00)
+
+    def is_active_hours(self, now: datetime | None = None) -> bool:
+        """Return True if current time is within active commute window, False if in down period."""
+        if not self.schedule_enabled:
+            return True
+        if now is None:
+            now = datetime.now()
+        hour = now.hour
+        if self.schedule_start_hour < self.schedule_end_hour:
+            return self.schedule_start_hour <= hour < self.schedule_end_hour
+        elif self.schedule_start_hour > self.schedule_end_hour:
+            return hour >= self.schedule_start_hour or hour < self.schedule_end_hour
+        return True
 
 
 def load_settings() -> Settings:
@@ -83,6 +100,23 @@ def load_settings() -> Settings:
 
     trmnl_webhook_url = os.environ.get("TRMNL_WEBHOOK_URL", "").strip() or None
 
+    raw_sched = os.environ.get("SCHEDULE_ENABLED", "true").strip().lower()
+    schedule_enabled = raw_sched in ("true", "1", "yes", "t", "y", "on")
+
+    try:
+        schedule_start_hour = int(os.environ.get("SCHEDULE_START_HOUR", "6"))
+    except ValueError as exc:
+        raise InvalidSettingsError("SCHEDULE_START_HOUR must be an integer between 0 and 23") from exc
+    if not 0 <= schedule_start_hour <= 23:
+        raise InvalidSettingsError("SCHEDULE_START_HOUR must be between 0 and 23")
+
+    try:
+        schedule_end_hour = int(os.environ.get("SCHEDULE_END_HOUR", "19"))
+    except ValueError as exc:
+        raise InvalidSettingsError("SCHEDULE_END_HOUR must be an integer between 0 and 23") from exc
+    if not 0 <= schedule_end_hour <= 23:
+        raise InvalidSettingsError("SCHEDULE_END_HOUR must be between 0 and 23")
+
     return Settings(
         station=station,
         direction=direction,
@@ -90,6 +124,9 @@ def load_settings() -> Settings:
         max_departures=max_departures,
         trmnl_webhook_url=trmnl_webhook_url,
         display_style=display_style,
+        schedule_enabled=schedule_enabled,
+        schedule_start_hour=schedule_start_hour,
+        schedule_end_hour=schedule_end_hour,
     )
 
 
@@ -100,6 +137,9 @@ def save_settings(
     max_departures: int = 5,
     trmnl_webhook_url: str | None = None,
     display_style: str = "solari",
+    schedule_enabled: bool = True,
+    schedule_start_hour: int = 6,
+    schedule_end_hour: int = 19,
 ) -> Settings:
     """Validate and persist new configuration to .env and update active environment."""
     global _last_env_mtime
@@ -123,6 +163,11 @@ def save_settings(
     if style_clean not in VALID_STYLES:
         raise InvalidSettingsError(f"DISPLAY_STYLE must be one of {sorted(VALID_STYLES)}, got {raw_style!r}")
 
+    if not 0 <= schedule_start_hour <= 23:
+        raise InvalidSettingsError("SCHEDULE_START_HOUR must be between 0 and 23")
+    if not 0 <= schedule_end_hour <= 23:
+        raise InvalidSettingsError("SCHEDULE_END_HOUR must be between 0 and 23")
+
     # Format .env lines
     lines = [
         f"STATION={station_clean}",
@@ -130,6 +175,9 @@ def save_settings(
         f"NUM_MINS={num_mins}",
         f"MAX_DEPARTURES={max_departures}",
         f"DISPLAY_STYLE={style_clean}",
+        f"SCHEDULE_ENABLED={'true' if schedule_enabled else 'false'}",
+        f"SCHEDULE_START_HOUR={schedule_start_hour}",
+        f"SCHEDULE_END_HOUR={schedule_end_hour}",
     ]
     if trmnl_webhook_url:
         lines.append(f"TRMNL_WEBHOOK_URL={trmnl_webhook_url.strip()}")
@@ -145,6 +193,9 @@ def save_settings(
     os.environ["NUM_MINS"] = str(num_mins)
     os.environ["MAX_DEPARTURES"] = str(max_departures)
     os.environ["DISPLAY_STYLE"] = style_clean
+    os.environ["SCHEDULE_ENABLED"] = "true" if schedule_enabled else "false"
+    os.environ["SCHEDULE_START_HOUR"] = str(schedule_start_hour)
+    os.environ["SCHEDULE_END_HOUR"] = str(schedule_end_hour)
     if trmnl_webhook_url:
         os.environ["TRMNL_WEBHOOK_URL"] = trmnl_webhook_url.strip()
 
@@ -160,4 +211,7 @@ def save_settings(
         max_departures=max_departures,
         trmnl_webhook_url=trmnl_webhook_url or os.environ.get("TRMNL_WEBHOOK_URL"),
         display_style=style_clean,
+        schedule_enabled=schedule_enabled,
+        schedule_start_hour=schedule_start_hour,
+        schedule_end_hour=schedule_end_hour,
     )

@@ -108,12 +108,21 @@ def terminal(
 def screen_png(
     battery: int | None = Query(default=None, ge=0, le=100, description="Battery percentage (0-100)"),
     style: str | None = Query(default=None, description="Display style: solari, matrix, plain, reverse"),
+    mode: str = Query(default="auto", description="Display mode: auto, trains, clock"),
 ) -> Response:
     """Return an 800x480 1-bit monochrome PNG image for e-paper displays."""
     settings = load_settings()
     result = get_departures(settings)
     active_style = style or settings.display_style
-    png_bytes = render_screen_png(result, settings.direction, battery=battery, style=active_style)
+    png_bytes = render_screen_png(
+        result,
+        settings.direction,
+        battery=battery,
+        style=active_style,
+        mode=mode,
+        is_active=settings.is_active_hours(),
+        resume_hour=settings.schedule_start_hour,
+    )
     return Response(content=png_bytes, media_type="image/png")
 
 
@@ -121,12 +130,21 @@ def screen_png(
 def screen_bmp(
     battery: int | None = Query(default=None, ge=0, le=100, description="Battery percentage (0-100)"),
     style: str | None = Query(default=None, description="Display style: solari, matrix, plain, reverse"),
+    mode: str = Query(default="auto", description="Display mode: auto, trains, clock"),
 ) -> Response:
     """Return an 800x480 1-bit monochrome Windows BMP image for e-paper displays."""
     settings = load_settings()
     result = get_departures(settings)
     active_style = style or settings.display_style
-    bmp_bytes = render_screen_bmp(result, settings.direction, battery=battery, style=active_style)
+    bmp_bytes = render_screen_bmp(
+        result,
+        settings.direction,
+        battery=battery,
+        style=active_style,
+        mode=mode,
+        is_active=settings.is_active_hours(),
+        resume_hour=settings.schedule_start_hour,
+    )
     return Response(content=bmp_bytes, media_type="image/bmp")
 
 
@@ -135,12 +153,22 @@ def screen_bin(
     battery: int | None = Query(default=None, ge=0, le=100, description="Battery percentage (0-100)"),
     invert: bool = Query(default=False, description="Invert bit polarity (0=white, 1=black)"),
     style: str | None = Query(default=None, description="Display style: solari, matrix, plain, reverse"),
+    mode: str = Query(default="auto", description="Display mode: auto, trains, clock"),
 ) -> Response:
     """Return an exact 48,000-byte raw 1-bit framebuffer for Waveshare 7.5inch e-paper displays."""
     settings = load_settings()
     result = get_departures(settings)
     active_style = style or settings.display_style
-    raw_bytes = render_screen_raw(result, settings.direction, battery=battery, invert=invert, style=active_style)
+    raw_bytes = render_screen_raw(
+        result,
+        settings.direction,
+        battery=battery,
+        invert=invert,
+        style=active_style,
+        mode=mode,
+        is_active=settings.is_active_hours(),
+        resume_hour=settings.schedule_start_hour,
+    )
     return Response(
         content=raw_bytes,
         media_type="application/octet-stream",
@@ -552,10 +580,169 @@ def _preview_plain(result, heading: str, invert: bool = False) -> str:
 </html>"""
 
 
+def _preview_clock_weather(result, heading: str, invert: bool = False, resume_hour: int = 6) -> str:
+    bg_color = "#000" if invert else "#fff"
+    text_color = "#fff" if invert else "#000"
+    border_color = "#fff" if invert else "#000"
+    card_bg = "#111" if invert else "#f8fafc"
+    card_border = "#444" if invert else "#cbd5e1"
+    badge_bg = "#fff" if invert else "#000"
+    badge_text = "#000" if invert else "#fff"
+
+    now = datetime.now()
+    now_str = now.strftime("%H:%M")
+    date_str = now.strftime("%A, %d %B %Y").upper()
+
+    tw = result.tomorrow_weather
+    if tw is not None:
+        cond_html = f"{tw.symbol} {escape(tw.condition.upper())}"
+        temp_html = f"High: {tw.temp_max:.1f}&deg;C &bull; Low: {tw.temp_min:.1f}&deg;C"
+        rain_html = f"Precipitation: {tw.rain_chance}%"
+        if tw.rain_chance >= 40:
+            tip_html = "Heavy rain expected &mdash; pack an umbrella"
+        elif tw.rain_chance >= 20:
+            tip_html = "Light rain showers possible during commute"
+        else:
+            tip_html = "Dry & clear conditions expected for morning commute"
+        date_sub = f"Forecast Date: {escape(tw.date_str)}"
+    else:
+        cond_html = "Forecast Unavailable"
+        temp_html = "--&deg;C / --&deg;C"
+        rain_html = "Rain: --%"
+        tip_html = "Open-Meteo weather service offline"
+        date_sub = "Tomorrow"
+
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="60">
+<title>DART - Standby Clock & Tomorrow's Weather</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  @font-face {{
+    font-family: 'Bebas Neue';
+    src: url('/fonts/BebasNeue.ttf') format('truetype');
+  }}
+  @font-face {{
+    font-family: 'Oswald';
+    src: url('/fonts/Oswald.ttf') format('truetype');
+  }}
+  * {{ box-sizing: border-box; }}
+  html, body {{
+    width: 800px; height: 480px; margin: 0; padding: 0;
+    background: {bg_color}; color: {text_color};
+    font-family: 'Oswald', -apple-system, sans-serif;
+    overflow: hidden;
+  }}
+  body {{
+    padding: 16px 20px;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }}
+  .clock-header {{
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 2px solid {border_color}; padding-bottom: 6px;
+  }}
+  .clock-title {{ font-size: 24px; font-weight: 700; letter-spacing: 1px; }}
+  .clock-badge {{
+    font-size: 14px; font-weight: 600; letter-spacing: 0.5px;
+    background: {badge_bg}; color: {badge_text};
+    padding: 4px 10px; border-radius: 4px;
+  }}
+  .main-split {{
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+    align-items: center; margin: 10px 0;
+  }}
+  .clock-section {{
+    display: flex; flex-direction: column;
+  }}
+  .huge-clock {{
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 116px; line-height: 0.9; margin: 0;
+    letter-spacing: 2px;
+  }}
+  .huge-date {{
+    font-size: 19px; font-weight: 600; margin-top: 8px;
+    letter-spacing: 0.5px; opacity: 0.9;
+  }}
+  .sched-box {{
+    margin-top: 14px; padding: 10px 14px;
+    border: 1px solid {border_color}; border-radius: 6px;
+    font-size: 13px; line-height: 1.5;
+  }}
+  .sched-title {{ font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }}
+  .weather-card {{
+    border: 2px solid {border_color}; border-radius: 8px;
+    padding: 18px 20px; background: {card_bg};
+  }}
+  .weather-head {{
+    font-family: 'Bebas Neue', sans-serif; font-size: 26px;
+    letter-spacing: 1px; margin-bottom: 10px; border-bottom: 1px solid {border_color};
+    padding-bottom: 4px;
+  }}
+  .weather-cond {{
+    font-size: 26px; font-weight: 700; margin-bottom: 6px;
+  }}
+  .weather-temp {{
+    font-size: 20px; font-weight: 600; margin-bottom: 12px;
+  }}
+  .rain-badge {{
+    display: inline-block; background: {badge_bg}; color: {badge_text};
+    padding: 6px 14px; border-radius: 6px; font-weight: 700; font-size: 15px;
+    margin-bottom: 12px;
+  }}
+  .weather-tip {{
+    font-size: 14px; font-weight: 600; margin-top: 6px;
+  }}
+  .clock-footer {{
+    display: flex; justify-content: space-between; font-size: 12px;
+    border-top: 1px solid {border_color}; padding-top: 8px;
+  }}
+</style>
+</head>
+<body>
+  <div class="clock-header">
+    <div class="clock-title">DART &bull; {escape(heading.upper())}</div>
+    <div class="clock-badge">🌙 NIGHT STANDBY &bull; RESUMES {resume_hour:02d}:00</div>
+  </div>
+
+  <div class="main-split">
+    <div class="clock-section">
+      <div class="huge-clock">{now_str}</div>
+      <div class="huge-date">{date_str}</div>
+      <div class="sched-box">
+        <div class="sched-title">Display Schedule Status</div>
+        <div>&bull; Active Commute Window: {resume_hour:02d}:00 &ndash; 19:00</div>
+        <div>&bull; Current Mode: Down Period (Night Standby)</div>
+        <div>&bull; Station: {escape(result.station_name)} ({result.station_code})</div>
+      </div>
+    </div>
+
+    <div class="weather-card">
+      <div class="weather-head">TOMORROW'S COMMUTE FORECAST</div>
+      <div class="weather-cond">{cond_html}</div>
+      <div class="weather-temp">{temp_html}</div>
+      <div class="rain-badge">{rain_html}</div>
+      <div class="weather-tip">{tip_html}</div>
+      <div style="font-size: 11px; opacity: 0.7; margin-top: 10px;">{date_sub}</div>
+    </div>
+  </div>
+
+  <div class="clock-footer">
+    <span>LIVE IRISH RAIL REAL-TIME DATA &bull; OPEN-METEO WEATHER ENGINE</span>
+    <span>UPDATED: {now.strftime('%H:%M:%S')}</span>
+    <span>ADAFRUIT ESP32-S3</span>
+  </div>
+</body>
+</html>"""
+
+
 @app.get("/preview", response_class=HTMLResponse)
 def preview(
     invert: bool = Query(default=False, description="Invert colors for dark display"),
     style: str | None = Query(default=None, description="Display style: solari, matrix, plain, reverse"),
+    mode: str = Query(default="auto", description="Display mode: auto, trains, clock"),
 ) -> HTMLResponse:
     settings = load_settings()
     result = get_departures(settings)
@@ -565,6 +752,14 @@ def preview(
         heading += f" ({settings.direction})"
 
     active_style = (style or settings.display_style).strip().lower()
+    is_invert = invert or (active_style in ("reverse", "inverted", "dark"))
+    is_active = settings.is_active_hours()
+
+    req_mode = (mode or "auto").strip().lower()
+    if req_mode == "clock" or (req_mode == "auto" and not is_active):
+        html = _preview_clock_weather(result, heading, invert=is_invert, resume_hour=settings.schedule_start_hour)
+        return HTMLResponse(content=html)
+
     if active_style in ("reverse", "inverted", "dark"):
         html = _preview_plain(result, heading, invert=True)
     elif active_style in ("matrix", "dotmatrix", "modern"):

@@ -103,3 +103,97 @@ def test_save_settings_with_display_style(monkeypatch, tmp_path):
             direction="Southbound",
             display_style="invalid",
         )
+
+
+def test_load_settings_scheduler_defaults(monkeypatch):
+    monkeypatch.setenv("STATION", "Sutton")
+    monkeypatch.delenv("SCHEDULE_ENABLED", raising=False)
+    monkeypatch.delenv("SCHEDULE_START_HOUR", raising=False)
+    monkeypatch.delenv("SCHEDULE_END_HOUR", raising=False)
+
+    settings = config.load_settings()
+    assert settings.schedule_enabled is True
+    assert settings.schedule_start_hour == 6
+    assert settings.schedule_end_hour == 19
+
+
+def test_load_settings_scheduler_custom(monkeypatch):
+    monkeypatch.setenv("STATION", "Sutton")
+    monkeypatch.setenv("SCHEDULE_ENABLED", "false")
+    monkeypatch.setenv("SCHEDULE_START_HOUR", "7")
+    monkeypatch.setenv("SCHEDULE_END_HOUR", "22")
+
+    settings = config.load_settings()
+    assert settings.schedule_enabled is False
+    assert settings.schedule_start_hour == 7
+    assert settings.schedule_end_hour == 22
+
+
+def test_load_settings_scheduler_invalid_hours(monkeypatch):
+    monkeypatch.setenv("STATION", "Sutton")
+    monkeypatch.setenv("SCHEDULE_START_HOUR", "25")
+    with pytest.raises(config.InvalidSettingsError, match="SCHEDULE_START_HOUR must be between 0 and 23"):
+        config.load_settings()
+
+    monkeypatch.setenv("SCHEDULE_START_HOUR", "6")
+    monkeypatch.setenv("SCHEDULE_END_HOUR", "-1")
+    with pytest.raises(config.InvalidSettingsError, match="SCHEDULE_END_HOUR must be between 0 and 23"):
+        config.load_settings()
+
+
+def test_settings_is_active_hours():
+    from datetime import datetime
+
+    # Disabled schedule: always active
+    disabled_sched = config.Settings(
+        station="Sutton", direction=None, num_mins=90, max_departures=5,
+        schedule_enabled=False, schedule_start_hour=6, schedule_end_hour=19,
+    )
+    assert disabled_sched.is_active_hours(datetime(2026, 10, 10, 2, 0)) is True
+    assert disabled_sched.is_active_hours(datetime(2026, 10, 10, 12, 0)) is True
+
+    # Standard daytime schedule: 6:00 to 19:00
+    normal_sched = config.Settings(
+        station="Sutton", direction=None, num_mins=90, max_departures=5,
+        schedule_enabled=True, schedule_start_hour=6, schedule_end_hour=19,
+    )
+    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 5, 59)) is False
+    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 6, 0)) is True
+    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 12, 30)) is True
+    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 18, 59)) is True
+    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 19, 0)) is False
+    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 23, 0)) is False
+
+    # Overnight schedule (e.g. night shift: 22:00 to 6:00)
+    night_sched = config.Settings(
+        station="Sutton", direction=None, num_mins=90, max_departures=5,
+        schedule_enabled=True, schedule_start_hour=22, schedule_end_hour=6,
+    )
+    assert night_sched.is_active_hours(datetime(2026, 10, 10, 22, 0)) is True
+    assert night_sched.is_active_hours(datetime(2026, 10, 10, 23, 59)) is True
+    assert night_sched.is_active_hours(datetime(2026, 10, 10, 3, 0)) is True
+    assert night_sched.is_active_hours(datetime(2026, 10, 10, 5, 59)) is True
+    assert night_sched.is_active_hours(datetime(2026, 10, 10, 6, 0)) is False
+    assert night_sched.is_active_hours(datetime(2026, 10, 10, 14, 0)) is False
+
+
+def test_save_settings_with_scheduler(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr(config, "_ENV_PATH", env_file)
+
+    saved = config.save_settings(
+        station="Howth",
+        direction="Southbound",
+        schedule_enabled=False,
+        schedule_start_hour=8,
+        schedule_end_hour=18,
+    )
+    assert saved.schedule_enabled is False
+    assert saved.schedule_start_hour == 8
+    assert saved.schedule_end_hour == 18
+
+    content = env_file.read_text()
+    assert "SCHEDULE_ENABLED=false" in content
+    assert "SCHEDULE_START_HOUR=8" in content
+    assert "SCHEDULE_END_HOUR=18" in content
+

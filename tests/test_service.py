@@ -77,3 +77,40 @@ def test_get_departures_handles_weather_failure(monkeypatch):
 
     assert result.rain_chance is None
     assert result.departures
+
+
+def test_get_departures_includes_tomorrow_weather(monkeypatch):
+    _patch(monkeypatch)
+    mock_forecast = weather_client.DailyForecast(
+        date_str="2026-10-11",
+        temp_max=16.0,
+        temp_min=9.0,
+        rain_chance=30,
+        weather_code=2,
+        condition="Partly Cloudy",
+        symbol="⛅",
+    )
+    monkeypatch.setattr(weather_client, "fetch_tomorrow_weather", lambda lat, lon: mock_forecast)
+
+    settings = Settings(station="Sutton", direction=None, num_mins=90, max_departures=5)
+    result = get_departures(settings)
+
+    assert result.tomorrow_weather is not None
+    assert result.tomorrow_weather.temp_max == 16.0
+    assert result.tomorrow_weather.condition == "Partly Cloudy"
+
+
+def test_get_departures_handles_tomorrow_weather_failure(monkeypatch):
+    _patch(monkeypatch)
+
+    def _raise(lat, lon):
+        raise weather_client.WeatherError("weather unavailable")
+
+    monkeypatch.setattr(weather_client, "fetch_tomorrow_weather", _raise)
+
+    settings = Settings(station="Sutton", direction=None, num_mins=90, max_departures=5)
+    result = get_departures(settings)
+
+    assert result.tomorrow_weather is None
+    assert result.departures
+

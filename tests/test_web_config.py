@@ -172,3 +172,93 @@ def test_reload_stations_get_redirect(monkeypatch):
         assert response.headers["location"] == "/?reloaded=1"
     finally:
         stations._cached_dart_stations = None
+
+
+def test_scheduler_web_config_api(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("STATION=Sutton\nDIRECTION=Southbound\nSCHEDULE_ENABLED=true\nSCHEDULE_START_HOUR=6\nSCHEDULE_END_HOUR=19\n")
+    monkeypatch.setattr(config, "_ENV_PATH", env_file)
+
+    # Test GET /api/config returns schedule settings
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["schedule_enabled"] is True
+    assert data["schedule_start_hour"] == 6
+    assert data["schedule_end_hour"] == 19
+    assert "is_active_hours" in data
+
+    # Test POST /api/config modifies schedule
+    post_resp = client.post(
+        "/api/config",
+        json={
+            "station": "Sutton",
+            "schedule_enabled": False,
+            "schedule_start_hour": 7,
+            "schedule_end_hour": 22,
+        },
+    )
+    assert post_resp.status_code == 200
+    post_data = post_resp.json()
+    assert post_data["settings"]["schedule_enabled"] is False
+    assert post_data["settings"]["schedule_start_hour"] == 7
+    assert post_data["settings"]["schedule_end_hour"] == 22
+
+
+def test_scheduler_save_form(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("STATION=Sutton\n")
+    monkeypatch.setattr(config, "_ENV_PATH", env_file)
+
+    response = client.post(
+        "/save",
+        data={
+            "station": "Sutton",
+            "direction": "Both",
+            "display_style": "reverse",
+            "num_mins": 90,
+            "max_departures": 5,
+            "schedule_enabled": "on",
+            "schedule_start_hour": 5,
+            "schedule_end_hour": 20,
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    loaded = config.load_settings()
+    assert loaded.schedule_enabled is True
+    assert loaded.schedule_start_hour == 5
+    assert loaded.schedule_end_hour == 20
+
+    # Test disabling schedule (checkbox omitted in form submission)
+    response_off = client.post(
+        "/save",
+        data={
+            "station": "Sutton",
+            "direction": "Both",
+            "display_style": "reverse",
+            "num_mins": 90,
+            "max_departures": 5,
+            "schedule_start_hour": 6,
+            "schedule_end_hour": 19,
+        },
+        follow_redirects=False,
+    )
+    assert response_off.status_code == 303
+    loaded_off = config.load_settings()
+    assert loaded_off.schedule_enabled is False
+
+
+def test_scheduler_ui_elements(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("STATION=Sutton\nSCHEDULE_ENABLED=true\n")
+    monkeypatch.setattr(config, "_ENV_PATH", env_file)
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Display Scheduler & Night Standby" in response.text
+    assert "name=\"schedule_start_hour\"" in response.text
+    assert "name=\"schedule_end_hour\"" in response.text
+    assert "name=\"schedule_enabled\"" in response.text
+    assert "Tomorrow's Weather" in response.text
+

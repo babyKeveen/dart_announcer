@@ -31,6 +31,9 @@ class ConfigPayload(BaseModel):
     )
     num_mins: int = Field(default=90, ge=5, le=90, description="Lookahead minutes (5-90)")
     max_departures: int = Field(default=5, ge=1, le=10, description="Max departures (1-10)")
+    schedule_enabled: bool = Field(default=True, description="Enable smart scheduler (clock & weather during down hours)")
+    schedule_start_hour: int = Field(default=6, ge=0, le=23, description="Commute active start hour (0-23, e.g. 6 for 6am)")
+    schedule_end_hour: int = Field(default=19, ge=0, le=23, description="Commute active end hour (0-23, e.g. 19 for 7pm)")
 
 
 @app.get("/api/config")
@@ -43,6 +46,10 @@ def get_config_api():
         "display_style": current.display_style,
         "num_mins": current.num_mins,
         "max_departures": current.max_departures,
+        "schedule_enabled": current.schedule_enabled,
+        "schedule_start_hour": current.schedule_start_hour,
+        "schedule_end_hour": current.schedule_end_hour,
+        "is_active_hours": current.is_active_hours(),
         "stations": get_dart_stations(),
     }
 
@@ -58,6 +65,9 @@ def update_config_api(payload: ConfigPayload):
             display_style=payload.display_style,
             num_mins=payload.num_mins,
             max_departures=payload.max_departures,
+            schedule_enabled=payload.schedule_enabled,
+            schedule_start_hour=payload.schedule_start_hour,
+            schedule_end_hour=payload.schedule_end_hour,
         )
         return {
             "status": "success",
@@ -68,6 +78,10 @@ def update_config_api(payload: ConfigPayload):
                 "display_style": updated.display_style,
                 "num_mins": updated.num_mins,
                 "max_departures": updated.max_departures,
+                "schedule_enabled": updated.schedule_enabled,
+                "schedule_start_hour": updated.schedule_start_hour,
+                "schedule_end_hour": updated.schedule_end_hour,
+                "is_active_hours": updated.is_active_hours(),
             },
         }
     except InvalidSettingsError as exc:
@@ -118,6 +132,18 @@ async def save_form(request: Request):
         max_departures = 5
 
     dir_val = None if direction in ("Both", "") else direction
+
+    schedule_enabled = "schedule_enabled" in form_data
+    try:
+        schedule_start_hour = int(form_data.get("schedule_start_hour", [6])[0])
+    except ValueError:
+        schedule_start_hour = 6
+
+    try:
+        schedule_end_hour = int(form_data.get("schedule_end_hour", [19])[0])
+    except ValueError:
+        schedule_end_hour = 19
+
     try:
         save_settings(
             station=station,
@@ -125,6 +151,9 @@ async def save_form(request: Request):
             display_style=display_style,
             num_mins=num_mins,
             max_departures=max_departures,
+            schedule_enabled=schedule_enabled,
+            schedule_start_hour=schedule_start_hour,
+            schedule_end_hour=schedule_end_hour,
         )
         return RedirectResponse(url="/?saved=1", status_code=303)
     except InvalidSettingsError as exc:
@@ -191,6 +220,26 @@ def index_page(
           <div><strong>Error saving settings:</strong> {escape(error)}</div>
         </div>
         """
+
+    def _format_hour(h: int) -> str:
+        if h == 0:
+            return "12:00 AM (Midnight)"
+        elif h < 12:
+            return f"{h}:00 AM"
+        elif h == 12:
+            return "12:00 PM (Noon)"
+        else:
+            return f"{h - 12}:00 PM ({h:02d}:00)"
+
+    start_hour_options = "".join(
+        f'<option value="{h}" {"selected" if h == settings.schedule_start_hour else ""}>{_format_hour(h)}</option>'
+        for h in range(24)
+    )
+    end_hour_options = "".join(
+        f'<option value="{h}" {"selected" if h == settings.schedule_end_hour else ""}>{_format_hour(h)}</option>'
+        for h in range(24)
+    )
+    schedule_is_active = settings.is_active_hours()
 
     html = f"""<!doctype html>
 <html lang="en">
@@ -753,6 +802,39 @@ def index_page(
         </div>
       </div>
 
+      <!-- Display Scheduler -->
+      <div class="form-group" style="background: rgba(30, 41, 59, 0.4); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px; margin-top: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+          <label style="margin: 0; font-size: 15px; font-weight: 700; color: #fff;">⏰ Display Scheduler & Night Standby</label>
+          <span style="font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 4px; background: {'#065f46; color: #34d399;' if schedule_is_active else '#1e3a8a; color: #60a5fa;'}">
+            {'🟢 LIVE TRAINS ACTIVE' if schedule_is_active else '🌙 NIGHT CLOCK & WEATHER ACTIVE'}
+          </span>
+        </div>
+        
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 14px; font-size: 14px; font-weight: 600;">
+          <input type="checkbox" name="schedule_enabled" value="true" {'checked' if settings.schedule_enabled else ''} style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent);">
+          <span>Enable Smart Schedule (Switch to Clock & Tomorrow's Weather during down period)</span>
+        </label>
+
+        <div class="grid-2">
+          <div class="form-group" style="margin-bottom: 0;">
+            <label for="schedule_start_hour">Commute Active Start</label>
+            <select id="schedule_start_hour" name="schedule_start_hour">
+              {start_hour_options}
+            </select>
+            <p class="help-text">Live DART departures begin (default: 6:00 AM)</p>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 0;">
+            <label for="schedule_end_hour">Commute Active End</label>
+            <select id="schedule_end_hour" name="schedule_end_hour">
+              {end_hour_options}
+            </select>
+            <p class="help-text">Switches to Clock & Tomorrow's Weather (default: 7:00 PM)</p>
+          </div>
+        </div>
+      </div>
+
       <!-- Save Button -->
       <button type="submit" class="btn-submit">
         <span>💾 Save & Apply to Departure Board</span>
@@ -778,7 +860,13 @@ def index_page(
   <!-- Quick Access Links -->
   <div class="links-strip">
     <a href="http://{host_no_port}:8000/preview" target="_blank" class="quick-link">
-      <span>🖥️ Full Web Preview</span>
+      <span>🖥️ Live Preview (Auto)</span>
+    </a>
+    <a href="http://{host_no_port}:8000/preview?mode=clock" target="_blank" class="quick-link">
+      <span>⏰ Night Clock Preview</span>
+    </a>
+    <a href="http://{host_no_port}:8000/preview?mode=trains" target="_blank" class="quick-link">
+      <span>🚆 Train Board Preview</span>
     </a>
     <a href="http://{host_no_port}:8000/terminal" target="_blank" class="quick-link">
       <span>📟 Terminal Board</span>
