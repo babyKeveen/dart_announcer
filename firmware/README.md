@@ -9,7 +9,7 @@ It uses a dual-target architecture with **100% shared core logic**:
   - `dart_canvas.hpp`: 250×122 1-bit monochrome graphics engine, bitmap typography, and Waveshare 2.13" V2 buffer serializer.
   - `dart_font.hpp`: High-legibility 5x7 ASCII bitmap font with integer scaling.
 * **`firmware/raspbi/`**: Fast local simulation & prototyping tool running on Linux / Raspberry Pi OS.
-* **`firmware/esp32/`**: Production standalone battery-powered Arduino sketch for the **Adafruit ESP32-S3 Feather + Waveshare 2.13" V2**.
+* **`firmware/esp32_dart_display/`**: Production standalone battery-powered Arduino sketch for the **Adafruit ESP32-S3 Feather + Waveshare 2.13" V2**.
 
 ---
 
@@ -45,7 +45,7 @@ make run
 
 ---
 
-## Target 2: Standalone Kitchen Display (`firmware/esp32`)
+## Target 2: Standalone Kitchen Display (`firmware/esp32_dart_display`)
 
 The production wall-mounted device:
 * **Microcontroller**: Adafruit ESP32-S3 Feather (4MB Flash, 2MB PSRAM)
@@ -72,7 +72,7 @@ Connect the 8-pin connector of the Waveshare 2.13" HAT/cable to the Adafruit ESP
 
 ### Flashing via Arduino IDE
 
-1. Open `firmware/esp32/esp32_dart_display.ino` in **Arduino IDE**.
+1. Open `firmware/esp32_dart_display/esp32_dart_display.ino` in **Arduino IDE**.
 2. Select Board: **Tools &rarr; Board &rarr; esp32 &rarr; Adafruit Feather ESP32-S3 2MB PSRAM**
 3. Select Port: **`COM7`** (or your active serial port)
 4. Settings:
