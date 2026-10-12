@@ -76,6 +76,16 @@ bool   g_schedule_enabled   = true;
 int    g_schedule_start_hour = 6;   // 6 AM
 int    g_schedule_end_hour   = 19;  // 7 PM
 
+// ================== STANDALONE PREVIEW MODE =====================
+// Set to true to test the ESP32 without a physical screen or Raspberry Pi:
+//   1. Prints exact ASCII e-paper art directly to Serial Monitor.
+//   2. Hosts a live Web Server at http://<ESP32-IP>/ with a pixel-perfect 250x122 display preview!
+//   3. Stays awake over USB without resetting connection.
+bool   g_test_mode = true;
+uint8_t g_bmp_buffer[4096];
+size_t g_bmp_size = 0;
+dart::BoardData g_last_board;
+
 // ================== WAVESHARE 2.13" V2 LUT & DRIVER =============
 const unsigned char lut_full_update[] = {
     0x80,0x60,0x40,0x00,0x00,0x00,0x00,
@@ -108,7 +118,12 @@ void epdSendData(uint8_t data) {
 }
 
 void epdWaitBusy() {
+    uint32_t start = millis();
     while (digitalRead(PIN_EPD_BUSY) == HIGH) {
+        if (millis() - start > 2000) {
+            Serial.println("[Display] Busy timeout (no display attached or busy line high). Skipping wait.");
+            break;
+        }
         delay(10);
     }
 }
@@ -126,7 +141,7 @@ void epdInit() {
     pinMode(PIN_EPD_CS, OUTPUT);
     pinMode(PIN_EPD_DC, OUTPUT);
     pinMode(PIN_EPD_RST, OUTPUT);
-    pinMode(PIN_EPD_BUSY, INPUT);
+    pinMode(PIN_EPD_BUSY, INPUT_PULLDOWN);
 
     SPI.begin(36, -1, 35, PIN_EPD_CS); // SCK=36, MISO=none, MOSI=35, CS=10
     SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
@@ -258,10 +273,11 @@ void loadConfig() {
     g_schedule_enabled    = prefs.getBool("sched_en", true);
     g_schedule_start_hour = prefs.getInt("sched_start", 6);
     g_schedule_end_hour   = prefs.getInt("sched_end", 19);
+    g_test_mode           = prefs.getBool("test_mode", true); // Default to test mode for prototyping
     prefs.end();
 }
 
-void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir, bool reverse, bool sched_en, int sched_start, int sched_end) {
+void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir, bool reverse, bool sched_en, int sched_start, int sched_end, bool test_mode) {
     prefs.begin("dart_cfg", false); // Read-write mode
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
@@ -271,6 +287,7 @@ void saveConfig(const String& ssid, const String& pass, const String& station, c
     prefs.putBool("sched_en", sched_en);
     prefs.putInt("sched_start", sched_start);
     prefs.putInt("sched_end", sched_end);
+    prefs.putBool("test_mode", test_mode);
     prefs.end();
 }
 
@@ -284,6 +301,10 @@ void showSetupScreenOnEPD() {
     Serial.println("[EPD] Drawing Wi-Fi Setup Mode screen on e-paper...");
     dart::Canvas canvas;
     canvas.render_wifi_setup_screen(AP_SSID);
+
+    Serial.println("\n+------------------- 250x122 SETUP SCREEN PREVIEW ---------------+");
+    Serial.print(canvas.render_ascii_screen().c_str());
+    Serial.println("+----------------------------------------------------------------+\n");
 
     uint8_t epdBuffer[dart::Canvas::EPD_BUFFER_SIZE];
     canvas.export_waveshare_v2_buffer(epdBuffer);
@@ -312,7 +333,7 @@ String buildPortalHtml() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DART Kitchen Frame Setup</title>
+<title>DART Frame Setup</title>
 <style>
   :root { --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --accent: #22c55e; }
   body { background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; padding: 20px; margin: 0; display: flex; justify-content: center; }
@@ -384,6 +405,12 @@ String buildPortalHtml() {
       <option value="0">Disabled (Always Live Trains)</option>
     </select>
 
+    <label for="op_mode">Operating Mode</label>
+    <select name="op_mode" id="op_mode">
+      <option value="1">Desk / Test Mode (Web Preview + Serial ASCII)</option>
+      <option value="0">Battery Wall Frame (Deep Sleep)</option>
+    </select>
+
     <button type="submit">💾 Save & Connect</button>
   </form>
   <div class="footer">DART Kitchen Display &bull; Adafruit ESP32-S3</div>
@@ -424,11 +451,12 @@ void startCaptivePortal() {
         String dir = webServer.arg("direction");
         bool reverse = (webServer.arg("theme") == "1");
         bool sched_en = (webServer.arg("sched_en") != "0");
+        bool test_mode = (webServer.arg("op_mode") != "0");
 
-        Serial.printf("[SETUP] Received: SSID='%s', Station='%s', Dir='%s', Reverse=%d, Sched=%d\n",
-            ssid.c_str(), station.c_str(), dir.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0);
+        Serial.printf("[SETUP] Received: SSID='%s', Station='%s', Dir='%s', Reverse=%d, Sched=%d, TestMode=%d\n",
+            ssid.c_str(), station.c_str(), dir.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
 
-        saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19);
+        saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19, test_mode);
 
         String response = R"rawliteral(
 <!DOCTYPE html>
@@ -479,6 +507,155 @@ void startCaptivePortal() {
     }
 }
 
+String buildPreviewHtml() {
+    String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>ESP32 DART Display - Live Preview</title>
+  <style>
+    :root { --bg: #0f172a; --card: #1e293b; --accent: #22c55e; }
+    body { background: var(--bg); color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 24px 16px; margin: 0; }
+    .card { max-width: 580px; margin: 0 auto; background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    h1 { margin-top: 0; font-size: 22px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    p.sub { color: #94a3b8; font-size: 14px; margin-top: -6px; margin-bottom: 20px; }
+    .screen-frame { background: #334155; padding: 14px; border-radius: 8px; display: inline-block; margin-bottom: 16px; }
+    img.preview { width: 500px; height: 244px; image-rendering: pixelated; border: 2px solid #000; border-radius: 4px; display: block; }
+    .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 16px; background: #0f172a; padding: 10px; border-radius: 6px; }
+    .meta b { color: #38bdf8; }
+    .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+    a.btn { background: var(--accent); color: #000; font-weight: bold; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-size: 14px; }
+    a.btn:hover { background: #16a34a; }
+    a.btn-sec { background: #475569; color: #fff; }
+    a.btn-sec:hover { background: #334155; }
+    .badge { background: #3b82f6; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 11px; vertical-align: middle; }
+    .footer { font-size: 11px; color: #64748b; margin-top: 20px; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>🚆 DART Kitchen Display <span class="badge">WAVESHARE 2.13" PREVIEW</span></h1>
+  <p class="sub">Planned hardware e-paper output rendered on-chip by Adafruit ESP32-S3</p>
+
+  <div class="screen-frame">
+    <img class="preview" src="/screen.bmp" alt="Waveshare 2.13 E-Paper Display Preview">
+  </div>
+
+  <div class="meta">
+)rawliteral";
+
+    html += "<div>Station: <b>" + String(g_last_board.station_name.c_str()) + "</b></div>";
+    html += "<div>Query Time: <b>" + String(g_last_board.query_time.c_str()) + "</b></div>";
+    html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
+
+    html += R"rawliteral(
+  </div>
+
+  <div class="actions">
+    <a href="/refresh" class="btn">🔄 Refresh Trains Now</a>
+    <a href="/toggle-theme" class="btn btn-sec">🌓 Toggle Theme</a>
+  </div>
+
+  <div class="footer">
+    Auto-refreshes every 60s &bull; ESP32-S3 Native Output &bull; No Raspberry Pi Required
+  </div>
+</div>
+</body>
+</html>
+)rawliteral";
+    return html;
+}
+
+void fetchAndRender() {
+    float vbat = readBatteryVoltage();
+    int batPct = calculateBatteryPercentage(vbat);
+
+    char url[200];
+    snprintf(url, sizeof(url),
+        "http://api.irishrail.ie/realtime/realtime.asmx/getStationDataByCodeXML_WithNumMins?StationCode=%s&NumMins=%d",
+        g_station_code.c_str(), g_num_mins);
+    Serial.printf("\n[API] Fetching: %s\n", url);
+
+    std::string xmlResponse = "";
+    HTTPClient http;
+    http.begin(url);
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+        xmlResponse = http.getString().c_str();
+        Serial.printf("[API] Received %d bytes XML.\n", (int)xmlResponse.length());
+    } else {
+        Serial.printf("[ERROR] HTTP GET failed (code %d)\n", httpCode);
+    }
+    http.end();
+
+    if (!xmlResponse.empty()) {
+        g_last_board = dart::Parser::parse_station_xml(xmlResponse, g_direction.c_str());
+        Serial.printf("[Data] Parsed %s: %d trains at %s\n",
+            g_last_board.station_name.c_str(), (int)g_last_board.departures.size(), g_last_board.query_time.c_str());
+    } else {
+        g_last_board.success = false;
+        g_last_board.station_name = g_station_code.c_str();
+        g_last_board.query_time = "--:--";
+        g_last_board.error_message = "Irish Rail API Offline";
+    }
+
+    dart::Canvas canvas;
+    int curHour = g_last_board.query_time.length() >= 2 ? std::atoi(g_last_board.query_time.substr(0, 2).c_str()) : 12;
+    if (g_schedule_enabled && (curHour < g_schedule_start_hour || curHour >= g_schedule_end_hour)) {
+        Serial.println("[Schedule] Down period active: Rendering Standby Clock & Tomorrow's Weather.");
+        canvas.render_clock_weather_screen(g_last_board.station_name, g_last_board.query_time, "NIGHT STANDBY", 15, 9, 50, batPct, g_schedule_start_hour);
+    } else {
+        canvas.render_commute_board(g_last_board, batPct, g_direction.c_str());
+    }
+    if (g_reverse_mode) {
+        canvas.invert_canvas();
+    }
+
+    // 1. Export 250x122 1-bit BMP for live browser preview
+    g_bmp_size = canvas.export_bmp_buffer(g_bmp_buffer, sizeof(g_bmp_buffer));
+
+    // 2. Print ASCII visualizer directly to Serial Monitor
+    Serial.println("\n+------------------- 250x122 E-PAPER PREVIEW -------------------+");
+    Serial.print(canvas.render_ascii_screen().c_str());
+    Serial.println("+---------------------------------------------------------------+\n");
+
+    // 3. Update physical Waveshare 2.13" V2 Display (safe timeout if disconnected)
+    uint8_t epdBuffer[dart::Canvas::EPD_BUFFER_SIZE];
+    canvas.export_waveshare_v2_buffer(epdBuffer);
+    Serial.println("Updating Waveshare 2.13\" V2 e-paper (safe timeout if disconnected)...");
+    epdInit();
+    epdDisplay(epdBuffer);
+    epdSleep();
+}
+
+void setupPreviewServer() {
+    webServer.on("/", HTTP_GET, []() {
+        webServer.send(200, "text/html", buildPreviewHtml());
+    });
+    webServer.on("/screen.bmp", HTTP_GET, []() {
+        if (g_bmp_size > 0) {
+            webServer.send_P(200, "image/bmp", (const char*)g_bmp_buffer, g_bmp_size);
+        } else {
+            webServer.send(404, "text/plain", "BMP not ready");
+        }
+    });
+    webServer.on("/refresh", HTTP_GET, []() {
+        fetchAndRender();
+        webServer.sendHeader("Location", "/");
+        webServer.send(302, "text/plain", "");
+    });
+    webServer.on("/toggle-theme", HTTP_GET, []() {
+        g_reverse_mode = !g_reverse_mode;
+        fetchAndRender();
+        webServer.sendHeader("Location", "/");
+        webServer.send(302, "text/plain", "");
+    });
+    webServer.begin();
+}
+
 // ======================== MAIN EXECUTION ========================
 void setup() {
     Serial.begin(115200);
@@ -493,7 +670,7 @@ void setup() {
     Serial.printf("[Battery] %.2fV (%d%%)\n", vbat, batPct);
 
     if (vbat < 3.25f && vbat > 1.5f) {
-        Serial.println("[CRITICAL] LiPo battery voltage too low! Deep sleeping 1 hour.");
+        Serial.println("[CRITICAL] Battery voltage too low! Deep sleeping 1 hour. Please recharge using USB-C.");
         esp_sleep_enable_timer_wakeup(3600ULL * 1000000ULL);
         esp_deep_sleep_start();
     }
@@ -538,70 +715,41 @@ void setup() {
 
     Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
 
-    // 5. Query Irish Rail API directly
-    char url[200];
-    snprintf(url, sizeof(url),
-        "http://api.irishrail.ie/realtime/realtime.asmx/getStationDataByCodeXML_WithNumMins?StationCode=%s&NumMins=%d",
-        g_station_code.c_str(), g_num_mins);
-    Serial.printf("Fetching: %s\n", url);
+    // 5. Initial Fetch and Render
+    fetchAndRender();
 
-    std::string xmlResponse = "";
-    HTTPClient http;
-    http.begin(url);
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-        xmlResponse = http.getString().c_str();
-        Serial.printf("Received %d bytes XML.\n", (int)xmlResponse.length());
+    // 6. Test Mode vs Battery Deep Sleep Mode
+    if (g_test_mode) {
+        Serial.println("\n=================================================================");
+        Serial.println("🎉 STANDALONE PREVIEW SERVER ACTIVE ON ESP32!");
+        Serial.printf("👉 Open http://%s/ in your browser to view the live 250x122 display!\n", WiFi.localIP().toString().c_str());
+        Serial.println("Auto-refreshes every 60 seconds over Wi-Fi (no deep sleep).");
+        Serial.println("=================================================================\n");
+        setupPreviewServer();
     } else {
-        Serial.printf("[ERROR] HTTP GET failed (code %d)\n", httpCode);
+        // Battery Wall Frame Mode: shut down Wi-Fi immediately to save power
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        Serial.println("Wi-Fi radio powered off.");
+
+        uint32_t sleepSeconds = calculateSleepSeconds(g_last_board.query_time);
+        Serial.printf("Entering deep sleep for %u seconds...\n", sleepSeconds);
+        esp_sleep_enable_timer_wakeup(sleepSeconds * 1000000ULL);
+        esp_deep_sleep_start();
     }
-    http.end();
-
-    // 6. POWER OPTIMIZATION: Shut down Wi-Fi immediately!
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    Serial.println("Wi-Fi radio powered off.");
-
-    // 7. Parse Data & Render 250x122 Framebuffer
-    dart::BoardData board;
-    if (!xmlResponse.empty()) {
-        board = dart::Parser::parse_station_xml(xmlResponse, g_direction.c_str());
-        Serial.printf("Parsed: %s, Query Time: %s, Trains: %d\n",
-            board.station_name.c_str(), board.query_time.c_str(), (int)board.departures.size());
-    } else {
-        board.success = false;
-        board.error_message = "Irish Rail API Offline";
-    }
-
-    dart::Canvas canvas;
-    int curHour = board.query_time.length() >= 2 ? std::atoi(board.query_time.substr(0, 2).c_str()) : 12;
-    if (g_schedule_enabled && (curHour < g_schedule_start_hour || curHour >= g_schedule_end_hour)) {
-        Serial.println("[Schedule] Down period active! Rendering Standby Clock & Tomorrow's Weather.");
-        canvas.render_clock_weather_screen(board.station_name, board.query_time, "NIGHT STANDBY", 15, 9, 50, batPct, g_schedule_start_hour);
-    } else {
-        canvas.render_commute_board(board, batPct, g_direction.c_str());
-    }
-    if (g_reverse_mode) {
-        canvas.invert_canvas();
-    }
-
-    uint8_t epdBuffer[dart::Canvas::EPD_BUFFER_SIZE];
-    canvas.export_waveshare_v2_buffer(epdBuffer);
-
-    // 8. Update Waveshare 2.13" V2 Display
-    Serial.println("Refreshing Waveshare 2.13\" V2 e-paper...");
-    epdInit();
-    epdDisplay(epdBuffer);
-    epdSleep();
-    Serial.println("E-paper refreshed and put into deep sleep (~2uA).");
-
-    // 9. Calculate Sleep Time & Enter ESP32 Deep Sleep
-    uint32_t sleepSeconds = calculateSleepSeconds(board.query_time);
-    Serial.printf("Entering deep sleep for %u seconds...\n", sleepSeconds);
-    esp_sleep_enable_timer_wakeup(sleepSeconds * 1000000ULL);
-    esp_deep_sleep_start();
 }
 
+// Global auto-refresh timer for Test Mode
+uint32_t g_last_refresh_ms = 0;
+
 void loop() {
-    // Unused: execution restarts in setup() on timer wakeup
+    if (g_test_mode) {
+        webServer.handleClient();
+        if (millis() - g_last_refresh_ms > 60000) {
+            g_last_refresh_ms = millis();
+            Serial.println("\n[Auto-Refresh] Fetching live DART departures...");
+            fetchAndRender();
+        }
+        delay(10);
+    }
 }

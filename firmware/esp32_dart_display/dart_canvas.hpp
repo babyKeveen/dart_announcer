@@ -402,6 +402,10 @@ public:
         return out;
     }
 
+    std::string render_ascii_screen() const {
+        return generate_terminal_preview();
+    }
+
     // Save a standard uncompressed 1-bit Windows BMP image (250x122)
     bool save_bmp(const std::string& path) const {
         std::ofstream f(path, std::ios::binary);
@@ -459,6 +463,56 @@ public:
         }
 
         return true;
+    }
+
+    // Export 250x122 uncompressed 1-bit BMP directly to a memory buffer (3,966 bytes)
+    size_t export_bmp_buffer(uint8_t* out, size_t max_len) const {
+        int row_bytes = ((WIDTH + 31) / 32) * 4; // 32 bytes per row
+        int image_size = row_bytes * HEIGHT;     // 3,904 bytes
+        int file_size = 14 + 40 + 8 + image_size; // 3,966 bytes
+        if (max_len < (size_t)file_size || out == nullptr) return 0;
+
+        uint8_t file_header[14] = {
+            'B', 'M',
+            (uint8_t)(file_size & 0xFF), (uint8_t)((file_size >> 8) & 0xFF),
+            (uint8_t)((file_size >> 16) & 0xFF), (uint8_t)((file_size >> 24) & 0xFF),
+            0, 0, 0, 0,
+            62, 0, 0, 0 // Offset to pixel data
+        };
+
+        uint8_t info_header[40] = {
+            40, 0, 0, 0,
+            (uint8_t)(WIDTH & 0xFF), (uint8_t)((WIDTH >> 8) & 0xFF), 0, 0,
+            (uint8_t)(HEIGHT & 0xFF), (uint8_t)((HEIGHT >> 8) & 0xFF), 0, 0,
+            1, 0, 1, 0, 0, 0, 0, 0,
+            (uint8_t)(image_size & 0xFF), (uint8_t)((image_size >> 8) & 0xFF),
+            (uint8_t)((image_size >> 16) & 0xFF), (uint8_t)((image_size >> 24) & 0xFF),
+            0, 0, 0, 0, 0, 0, 0, 0,
+            2, 0, 0, 0, 0, 0, 0, 0
+        };
+
+        uint8_t color_table[8] = {
+            0, 0, 0, 0,       // Color 0: Black
+            255, 255, 255, 0  // Color 1: White
+        };
+
+        size_t offset = 0;
+        memcpy(out + offset, file_header, 14); offset += 14;
+        memcpy(out + offset, info_header, 40); offset += 40;
+        memcpy(out + offset, color_table, 8);  offset += 8;
+
+        for (int y = HEIGHT - 1; y >= 0; --y) {
+            uint8_t* row_ptr = out + offset;
+            memset(row_ptr, 0, row_bytes);
+            for (int x = 0; x < WIDTH; ++x) {
+                if (!get_pixel(x, y)) {
+                    row_ptr[x / 8] |= (1 << (7 - (x % 8)));
+                }
+            }
+            offset += row_bytes;
+        }
+
+        return offset;
     }
 };
 
