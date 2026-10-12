@@ -86,6 +86,17 @@ uint8_t g_bmp_buffer[4096];
 size_t g_bmp_size = 0;
 dart::BoardData g_last_board;
 
+// Static working buffers in BSS — avoids FreeRTOS 8KB stack overflow!
+static dart::Canvas g_canvas;
+static uint8_t      g_epd_buffer[dart::Canvas::EPD_BUFFER_SIZE];
+
+// Onboard NeoPixel status indicator for Adafruit Feather ESP32-S3
+void setStatusLed(uint8_t r, uint8_t g, uint8_t b) {
+#ifdef RGB_BUILTIN
+    rgbLedWrite(RGB_BUILTIN, r, g, b);
+#endif
+}
+
 // ================== WAVESHARE 2.13" V2 LUT & DRIVER =============
 const unsigned char lut_full_update[] = {
     0x80,0x60,0x40,0x00,0x00,0x00,0x00,
@@ -299,18 +310,16 @@ WebServer webServer(80);
 
 void showSetupScreenOnEPD() {
     Serial.println("[EPD] Drawing Wi-Fi Setup Mode screen on e-paper...");
-    dart::Canvas canvas;
-    canvas.render_wifi_setup_screen(AP_SSID);
+    g_canvas.clear(false);
+    g_canvas.render_wifi_setup_screen(AP_SSID);
 
-    Serial.println("\n+------------------- 250x122 SETUP SCREEN PREVIEW ---------------+");
-    Serial.print(canvas.render_ascii_screen().c_str());
-    Serial.println("+----------------------------------------------------------------+\n");
+    Serial.println("\n[SETUP SCREEN PREVIEW]");
+    g_canvas.print_ascii_screen(Serial);
 
-    uint8_t epdBuffer[dart::Canvas::EPD_BUFFER_SIZE];
-    canvas.export_waveshare_v2_buffer(epdBuffer);
+    g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
 
     epdInit();
-    epdDisplay(epdBuffer);
+    epdDisplay(g_epd_buffer);
     epdSleep();
 }
 
@@ -422,6 +431,7 @@ String buildPortalHtml() {
 }
 
 void startCaptivePortal() {
+    setStatusLed(48, 24, 0); // Amber NeoPixel: Captive Portal active
     Serial.println("\n[SETUP] Entering Captive Portal Configuration Mode!");
     showSetupScreenOnEPD();
 
@@ -602,32 +612,30 @@ void fetchAndRender() {
         g_last_board.error_message = "Irish Rail API Offline";
     }
 
-    dart::Canvas canvas;
+    g_canvas.clear(false);
     int curHour = g_last_board.query_time.length() >= 2 ? std::atoi(g_last_board.query_time.substr(0, 2).c_str()) : 12;
     if (g_schedule_enabled && (curHour < g_schedule_start_hour || curHour >= g_schedule_end_hour)) {
         Serial.println("[Schedule] Down period active: Rendering Standby Clock & Tomorrow's Weather.");
-        canvas.render_clock_weather_screen(g_last_board.station_name, g_last_board.query_time, "NIGHT STANDBY", 15, 9, 50, batPct, g_schedule_start_hour);
+        g_canvas.render_clock_weather_screen(g_last_board.station_name, g_last_board.query_time, "NIGHT STANDBY", 15, 9, 50, batPct, g_schedule_start_hour);
     } else {
-        canvas.render_commute_board(g_last_board, batPct, g_direction.c_str());
+        g_canvas.render_commute_board(g_last_board, batPct, g_direction.c_str());
     }
     if (g_reverse_mode) {
-        canvas.invert_canvas();
+        g_canvas.invert_canvas();
     }
 
     // 1. Export 250x122 1-bit BMP for live browser preview
-    g_bmp_size = canvas.export_bmp_buffer(g_bmp_buffer, sizeof(g_bmp_buffer));
+    g_bmp_size = g_canvas.export_bmp_buffer(g_bmp_buffer, sizeof(g_bmp_buffer));
 
     // 2. Print ASCII visualizer directly to Serial Monitor
-    Serial.println("\n+------------------- 250x122 E-PAPER PREVIEW -------------------+");
-    Serial.print(canvas.render_ascii_screen().c_str());
-    Serial.println("+---------------------------------------------------------------+\n");
+    Serial.println("\n[E-PAPER SCREEN PREVIEW]");
+    g_canvas.print_ascii_screen(Serial);
 
     // 3. Update physical Waveshare 2.13" V2 Display (safe timeout if disconnected)
-    uint8_t epdBuffer[dart::Canvas::EPD_BUFFER_SIZE];
-    canvas.export_waveshare_v2_buffer(epdBuffer);
+    g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
     Serial.println("Updating Waveshare 2.13\" V2 e-paper (safe timeout if disconnected)...");
     epdInit();
-    epdDisplay(epdBuffer);
+    epdDisplay(g_epd_buffer);
     epdSleep();
 }
 
@@ -660,22 +668,32 @@ void setupPreviewServer() {
 void setup() {
     Serial.begin(115200);
     delay(200);
-    Serial.println("\n[DART Announce] Standalone Feather Booting...");
+
+    // Initialize onboard NeoPixel LED on Adafruit Feather ESP32-S3
+#ifdef NEOPIXEL_POWER
+    pinMode(NEOPIXEL_POWER, OUTPUT);
+    digitalWrite(NEOPIXEL_POWER, NEOPIXEL_POWER_ON);
+#endif
+    setStatusLed(0, 16, 32); // Cyan: booting up
+
+    Serial.println("\n=======================================================");
+    Serial.println("  🚆 DART Announce - Adafruit Feather ESP32-S3 Display");
+    Serial.println("=======================================================");
 
     pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
 
-    // 1. Measure Battery
+    // 1. Load saved configuration from NVS
+    loadConfig();
+    g_test_mode = true; // Always stay awake in desk prototyping mode over USB
+    Serial.printf("[Config] SSID: '%s', Station: '%s', Dir: '%s', TestMode: %d\n",
+        g_wifi_ssid.c_str(), g_station_code.c_str(), g_direction.c_str(), g_test_mode ? 1 : 0);
+
+    // 2. Measure Battery (never sleep in test mode)
     float vbat = readBatteryVoltage();
     int batPct = calculateBatteryPercentage(vbat);
     Serial.printf("[Battery] %.2fV (%d%%)\n", vbat, batPct);
 
-    if (vbat < 3.25f && vbat > 1.5f) {
-        Serial.println("[CRITICAL] Battery voltage too low! Deep sleeping 1 hour. Please recharge using USB-C.");
-        esp_sleep_enable_timer_wakeup(3600ULL * 1000000ULL);
-        esp_deep_sleep_start();
-    }
-
-    // 2. Check for manual setup button trigger (holding BOOT button for >2 seconds)
+    // 3. Check for manual setup button trigger (holding BOOT button for >2 seconds)
     if (digitalRead(PIN_BOOT_BTN) == LOW) {
         Serial.println("[Trigger] BOOT button pressed! Checking hold duration...");
         delay(2000);
@@ -685,11 +703,6 @@ void setup() {
         }
     }
 
-    // 3. Load saved configuration from NVS
-    loadConfig();
-    Serial.printf("[Config] SSID: '%s', Station: '%s', Dir: '%s'\n",
-        g_wifi_ssid.c_str(), g_station_code.c_str(), g_direction.c_str());
-
     // If no SSID configured, enter Captive Portal immediately
     if (g_wifi_ssid.length() == 0) {
         Serial.println("[Setup] No Wi-Fi credentials configured. Launching Captive Portal.");
@@ -697,6 +710,7 @@ void setup() {
     }
 
     // 4. Connect Wi-Fi
+    setStatusLed(0, 0, 32); // Blue: connecting to Wi-Fi
     Serial.printf("Connecting to Wi-Fi: %s", g_wifi_ssid.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.begin(g_wifi_ssid.c_str(), g_wifi_password.c_str());
@@ -713,6 +727,7 @@ void setup() {
         startCaptivePortal();
     }
 
+    setStatusLed(0, 32, 0); // Green: connected and running!
     Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
 
     // 5. Initial Fetch and Render

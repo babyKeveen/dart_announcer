@@ -406,6 +406,36 @@ public:
         return generate_terminal_preview();
     }
 
+    // Stream line-by-line Unicode ASCII art directly to any Print output (e.g., Serial)
+    // without creating a 63KB temporary heap string
+    template <typename StreamT>
+    void print_ascii_screen(StreamT& out) const {
+        out.println("+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+");
+        char row_buf[WIDTH * 4 + 4];
+        for (int y = 0; y < HEIGHT; y += 2) {
+            int idx = 0;
+            row_buf[idx++] = '|';
+            for (int x = 0; x < WIDTH; ++x) {
+                bool top = get_pixel(x, y);
+                bool bottom = (y + 1 < HEIGHT) ? get_pixel(x, y + 1) : false;
+
+                if (top && bottom) {
+                    row_buf[idx++] = (char)0xE2; row_buf[idx++] = (char)0x96; row_buf[idx++] = (char)0x88; // █
+                } else if (top && !bottom) {
+                    row_buf[idx++] = (char)0xE2; row_buf[idx++] = (char)0x96; row_buf[idx++] = (char)0x80; // ▀
+                } else if (!top && bottom) {
+                    row_buf[idx++] = (char)0xE2; row_buf[idx++] = (char)0x96; row_buf[idx++] = (char)0x84; // ▄
+                } else {
+                    row_buf[idx++] = ' ';
+                }
+            }
+            row_buf[idx++] = '|';
+            row_buf[idx++] = '\0';
+            out.println(row_buf);
+        }
+        out.println("+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+");
+    }
+
     // Save a standard uncompressed 1-bit Windows BMP image (250x122)
     bool save_bmp(const std::string& path) const {
         std::ofstream f(path, std::ios::binary);
