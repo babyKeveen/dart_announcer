@@ -47,6 +47,8 @@
 #include <Preferences.h>
 #include <DNSServer.h>
 #include <WebServer.h>
+#include <vector>
+#include <algorithm>
 
 #include "dart_types.hpp"
 #include "dart_parser.hpp"
@@ -104,6 +106,142 @@ int      g_rain_chance     = -1;
 float    g_temperature     = -99.0f;
 uint32_t g_last_weather_ms = 0;
 
+// ==================== DART STATIONS (DYNAMIC & FALLBACK) ============
+struct StationItem {
+    String code;
+    String name;
+    float  lat;
+    float  lon;
+};
+
+const StationItem FALLBACK_STATIONS[] = {
+    {"MHIDE", "Malahide", 53.4509f, -6.1565f},
+    {"PMNCK", "Portmarnock", 53.4169f, -6.1512f},
+    {"GRGRD", "Clongriffin", 53.4032f, -6.1484f},
+    {"HOWTH", "Howth", 53.3891f, -6.0740f},
+    {"SUTTN", "Sutton", 53.3925f, -6.1082f},
+    {"BYSDE", "Bayside", 53.3916f, -6.1264f},
+    {"HWTHJ", "Howth Junction & Donaghmede", 53.3909f, -6.1537f},
+    {"KBRCK", "Kilbarrack", 53.3857f, -6.1666f},
+    {"RAHNY", "Raheny", 53.3815f, -6.1769f},
+    {"HTOWN", "Harmonstown", 53.3786f, -6.1913f},
+    {"KLSTR", "Killester", 53.3730f, -6.2045f},
+    {"CTARF", "Clontarf Road", 53.3629f, -6.2275f},
+    {"CNLLY", "Dublin Connolly", 53.3531f, -6.2459f},
+    {"TARA",  "Tara Street", 53.3470f, -6.2543f},
+    {"PERSE", "Dublin Pearse", 53.3433f, -6.2476f},
+    {"GCDK",  "Grand Canal Dock", 53.3397f, -6.2376f},
+    {"LDWNE", "Lansdowne Road", 53.3344f, -6.2297f},
+    {"SMONT", "Sandymount", 53.3282f, -6.2207f},
+    {"SIDNY", "Sydney Parade", 53.3204f, -6.2111f},
+    {"BTSTN", "Booterstown", 53.3105f, -6.2001f},
+    {"BROCK", "Blackrock", 53.3006f, -6.1784f},
+    {"SEAPT", "Seapoint", 53.2944f, -6.1601f},
+    {"SHILL", "Salthill & Monkstown", 53.2944f, -6.1528f},
+    {"DLERY", "Dun Laoghaire", 53.2954f, -6.1347f},
+    {"SCOVE", "Sandycove & Glasthule", 53.2875f, -6.1260f},
+    {"GLGRY", "Glenageary", 53.2811f, -6.1229f},
+    {"DLKEY", "Dalkey", 53.2755f, -6.1033f},
+    {"KILNY", "Killiney", 53.2557f, -6.1132f},
+    {"SKILL", "Shankill", 53.2364f, -6.1165f},
+    {"WBROK", "Woodbrook", 53.2185f, -6.1122f},
+    {"BRAY",  "Bray", 53.2043f, -6.1082f},
+    {"GSTNS", "Greystones", 53.1444f, -6.0632f},
+    {"KCOOL", "Kilcoole", 53.1065f, -6.0441f}
+};
+
+std::vector<StationItem> g_stations;
+
+void fetchDartStationsList() {
+    if (WiFi.status() != WL_CONNECTED) {
+        if (g_stations.empty()) {
+            for (const auto& s : FALLBACK_STATIONS) g_stations.push_back(s);
+        }
+        return;
+    }
+
+    Serial.println("[Stations] Querying Irish Rail API for live DART stations (StationType=D)...");
+    HTTPClient http;
+    http.begin("http://api.irishrail.ie/realtime/realtime.asmx/getAllStationsXML_WithStationType?StationType=D");
+    http.setTimeout(4000);
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+        String xml = http.getString();
+        std::vector<StationItem> parsed;
+        int pos = 0;
+        while (true) {
+            int stStart = xml.indexOf("<objStation>", pos);
+            if (stStart < 0) break;
+            int stEnd = xml.indexOf("</objStation>", stStart);
+            if (stEnd < 0) break;
+            String chunk = xml.substring(stStart, stEnd);
+            pos = stEnd + 13;
+
+            StationItem item;
+            int descS = chunk.indexOf("<StationDesc>");
+            int descE = chunk.indexOf("</StationDesc>");
+            if (descS >= 0 && descE > descS) {
+                item.name = chunk.substring(descS + 13, descE);
+                item.name.trim();
+            }
+
+            int codeS = chunk.indexOf("<StationCode>");
+            int codeE = chunk.indexOf("</StationCode>");
+            if (codeS >= 0 && codeE > codeS) {
+                item.code = chunk.substring(codeS + 13, codeE);
+                item.code.trim();
+            }
+
+            int latS = chunk.indexOf("<StationLatitude>");
+            int latE = chunk.indexOf("</StationLatitude>");
+            if (latS >= 0 && latE > latS) {
+                item.lat = chunk.substring(latS + 17, latE).toFloat();
+            }
+
+            int lonS = chunk.indexOf("<StationLongitude>");
+            int lonE = chunk.indexOf("</StationLongitude>");
+            if (lonS >= 0 && lonE > lonS) {
+                item.lon = chunk.substring(lonS + 18, lonE).toFloat();
+            }
+
+            if (item.code.length() > 0 && item.name.length() > 0) {
+                parsed.push_back(item);
+            }
+        }
+
+        if (!parsed.empty()) {
+            // Sort geographically North to South by latitude
+            std::sort(parsed.begin(), parsed.end(), [](const StationItem& a, const StationItem& b) {
+                return a.lat > b.lat;
+            });
+            g_stations = parsed;
+            Serial.printf("[Stations] Successfully loaded %d dynamic DART stations from Irish Rail.\n", (int)g_stations.size());
+        }
+    } else {
+        Serial.printf("[Stations] Live stations fetch returned code %d. Using fallback.\n", httpCode);
+    }
+    http.end();
+
+    if (g_stations.empty()) {
+        for (const auto& s : FALLBACK_STATIONS) g_stations.push_back(s);
+    }
+}
+
+void getStationCoordinates(const String& code, float& outLat, float& outLon) {
+    if (g_stations.empty()) {
+        fetchDartStationsList();
+    }
+    for (const auto& s : g_stations) {
+        if (s.code.equalsIgnoreCase(code)) {
+            outLat = s.lat;
+            outLon = s.lon;
+            return;
+        }
+    }
+    outLat = 53.387f;
+    outLon = -6.120f;
+}
+
 // Static working buffers in BSS — avoids FreeRTOS 8KB stack overflow!
 static dart::Canvas g_canvas;
 static uint8_t      g_epd_buffer[dart::Canvas::EPD_BUFFER_SIZE];
@@ -120,6 +258,7 @@ void fetchAndRender();
 void redrawCanvas();
 void readBatteryStatus();
 void fetchWeather();
+void fetchDartStationsList();
 
 // ================== WAVESHARE 7.5" V2 (UC8179) DRIVER =============
 void epdSendCommand(uint8_t command) {
@@ -310,9 +449,16 @@ void fetchWeather() {
         return;
     }
 
+    float lat = 53.387f, lon = -6.120f;
+    getStationCoordinates(g_station_code, lat, lon);
+
+    char url[180];
+    snprintf(url, sizeof(url),
+        "http://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,precipitation_probability",
+        lat, lon);
+
     HTTPClient http;
-    // Open-Meteo free keyless API for Dublin DART corridor (Sutton: 53.387N, -6.120W)
-    http.begin("http://api.open-meteo.com/v1/forecast?latitude=53.387&longitude=-6.120&current=temperature_2m,precipitation_probability");
+    http.begin(url);
     http.setTimeout(3000);
     int httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
@@ -334,7 +480,7 @@ void fetchWeather() {
                 int braceIdx = payload.indexOf("}", tempIdx);
                 int splitIdx = (commaIdx >= 0 && commaIdx < braceIdx) ? commaIdx : braceIdx;
                 g_temperature = payload.substring(tempIdx + 17, splitIdx).toFloat();
-                Serial.printf("[Weather] Temperature: %.1fC\n", g_temperature);
+                Serial.printf("[Weather] Station %s (%.4f, %.4f) Temp: %.1fC\n", g_station_code.c_str(), lat, lon, g_temperature);
             }
         }
     } else {
@@ -423,46 +569,11 @@ String buildPortalHtml() {
         wifiOptions = "<option value=\"\">No networks found (type below)</option>";
     }
 
-    struct StationItem { const char* code; const char* name; };
-    const StationItem stList[] = {
-        {"MHIDE", "Malahide"},
-        {"PMNCK", "Portmarnock"},
-        {"GRGRD", "Clongriffin"},
-        {"HOWTH", "Howth"},
-        {"SUTTN", "Sutton"},
-        {"BYSDE", "Bayside"},
-        {"HWTHJ", "Howth Junction & Donaghmede"},
-        {"KBRCK", "Kilbarrack"},
-        {"RAHNY", "Raheny"},
-        {"HTOWN", "Harmonstown"},
-        {"KLSTR", "Killester"},
-        {"CTARF", "Clontarf Road"},
-        {"CNLLY", "Dublin Connolly"},
-        {"TARA",  "Tara Street"},
-        {"PERSE", "Dublin Pearse"},
-        {"GCDK",  "Grand Canal Dock"},
-        {"LDWNE", "Lansdowne Road"},
-        {"SMONT", "Sandymount"},
-        {"SIDNY", "Sydney Parade"},
-        {"BTSTN", "Booterstown"},
-        {"BROCK", "Blackrock"},
-        {"SEAPT", "Seapoint"},
-        {"SHILL", "Salthill & Monkstown"},
-        {"DLERY", "Dun Laoghaire"},
-        {"SCOVE", "Sandycove & Glasthule"},
-        {"GLGRY", "Glenageary"},
-        {"DLKEY", "Dalkey"},
-        {"KILNY", "Killiney"},
-        {"SKILL", "Shankill"},
-        {"WBROK", "Woodbrook"},
-        {"BRAY",  "Bray"},
-        {"GSTNS", "Greystones"},
-        {"KCOOL", "Kilcoole"}
-    };
+    fetchDartStationsList();
 
     String stationHtml = "";
-    for (const auto& s : stList) {
-        stationHtml += "<option value=\"" + String(s.code) + "\"" + (g_station_code == s.code ? " selected" : "") + ">" + String(s.name) + " (" + String(s.code) + ")</option>\n";
+    for (const auto& s : g_stations) {
+        stationHtml += "<option value=\"" + s.code + "\"" + (g_station_code.equalsIgnoreCase(s.code) ? " selected" : "") + ">" + s.name + " (" + s.code + ")</option>\n";
     }
 
     String dirHtml = "";
@@ -980,7 +1091,8 @@ void setup() {
         Serial.println("[mDNS] Responder active: http://dart-display.local/");
     }
 
-    // 5. Initial Fetch and Render
+    // 5. Initial Fetch and Render (load dynamic DART stations first for coordinates)
+    fetchDartStationsList();
     fetchAndRender();
     g_last_refresh_ms = millis();
 
