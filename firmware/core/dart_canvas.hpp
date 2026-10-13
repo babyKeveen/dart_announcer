@@ -192,7 +192,7 @@ public:
                 }
                 draw_string(22, row_y + 3, dest, true, 2);
 
-                // Due in badge / time
+                // Due in time
                 std::string due_text;
                 if (dep.due_in <= 0) {
                     due_text = "DUE";
@@ -201,19 +201,8 @@ public:
                 }
 
                 int due_w = get_string_width(due_text, 2);
-                int badge_x = WIDTH - due_w - 8;
-                int badge_y = row_y + 1;
-                int badge_h = 18;
-                int badge_pad = 4;
-
-                if (dep.due_in <= 0) {
-                    // Inverted badge for "DUE" (blinking/high urgency)
-                    fill_rect(badge_x - badge_pad, badge_y, due_w + badge_pad * 2, badge_h, true);
-                    draw_string(badge_x, row_y + 3, due_text, false, 2);
-                } else {
-                    draw_rect(badge_x - badge_pad, badge_y, due_w + badge_pad * 2, badge_h, true);
-                    draw_string(badge_x, row_y + 3, due_text, true, 2);
-                }
+                int time_x = WIDTH - due_w - 6;
+                draw_string(time_x, row_y + 3, due_text, true, 2);
 
                 // Expected clock time next to destination if room
                 if (!dep.expected.empty() && dest.length() <= 8) {
