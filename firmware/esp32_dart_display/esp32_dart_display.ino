@@ -41,6 +41,8 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <SPI.h>
+#include <Wire.h>
+#include <base64.h>
 #include <Preferences.h>
 #include <DNSServer.h>
 #include <WebServer.h>
@@ -56,6 +58,10 @@ const int PIN_EPD_RST  = 6;
 const int PIN_EPD_BUSY = 5;
 const int PIN_VBAT     = 1;  // GPIO 1 (A13) on Adafruit ESP32-S3 Feather
 const int PIN_BOOT_BTN = 0;  // BOOT button on Adafruit ESP32-S3 Feather
+
+#ifndef PIN_I2C_POWER
+#define PIN_I2C_POWER 7
+#endif
 
 // ======================== DEFAULT FALLBACKS ====================
 const char* DEFAULT_STATION_CODE  = "SUTTN";
@@ -85,6 +91,12 @@ bool   g_test_mode = true;
 uint8_t g_bmp_buffer[4096];
 size_t g_bmp_size = 0;
 dart::BoardData g_last_board;
+uint32_t g_last_refresh_ms = 0;
+
+// Battery Telemetry (MAX17048 I2C fuel gauge / USB fallback)
+float g_battery_voltage = 4.2f;
+int   g_battery_percent = 100;
+bool  g_battery_is_lipo = false;
 
 // Static working buffers in BSS — avoids FreeRTOS 8KB stack overflow!
 static dart::Canvas g_canvas;
@@ -96,6 +108,11 @@ void setStatusLed(uint8_t r, uint8_t g, uint8_t b) {
     rgbLedWrite(RGB_BUILTIN, r, g, b);
 #endif
 }
+
+// Forward declarations
+void fetchAndRender();
+void redrawCanvas();
+void readBatteryStatus();
 
 // ================== WAVESHARE 2.13" V2 LUT & DRIVER =============
 const unsigned char lut_full_update[] = {
@@ -131,11 +148,11 @@ void epdSendData(uint8_t data) {
 void epdWaitBusy() {
     uint32_t start = millis();
     while (digitalRead(PIN_EPD_BUSY) == HIGH) {
-        if (millis() - start > 2000) {
+        if (millis() - start > 100) { // Fast 100ms timeout so disconnected panel never stalls web server
             Serial.println("[Display] Busy timeout (no display attached or busy line high). Skipping wait.");
             break;
         }
-        delay(10);
+        delay(5);
     }
 }
 
@@ -149,12 +166,16 @@ void epdReset() {
 }
 
 void epdInit() {
+    static bool s_spi_initialized = false;
     pinMode(PIN_EPD_CS, OUTPUT);
     pinMode(PIN_EPD_DC, OUTPUT);
     pinMode(PIN_EPD_RST, OUTPUT);
     pinMode(PIN_EPD_BUSY, INPUT_PULLDOWN);
 
-    SPI.begin(36, -1, 35, PIN_EPD_CS); // SCK=36, MISO=none, MOSI=35, CS=10
+    if (!s_spi_initialized) {
+        SPI.begin(36, -1, 35, PIN_EPD_CS); // SCK=36, MISO=none, MOSI=35, CS=10
+        s_spi_initialized = true;
+    }
     SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
 
     epdReset();
@@ -234,23 +255,54 @@ void epdDisplay(const uint8_t* buffer) {
 void epdSleep() {
     epdSendCommand(0x10); // Enter deep sleep
     epdSendData(0x01);
-    delay(100);
+    SPI.endTransaction();
+    delay(50);
     digitalWrite(PIN_EPD_RST, LOW);
 }
 
 // ======================== BATTERY TELEMETRY ========================
+void readBatteryStatus() {
+    static bool s_i2c_initialized = false;
+    if (!s_i2c_initialized) {
+        pinMode(PIN_I2C_POWER, OUTPUT);
+        digitalWrite(PIN_I2C_POWER, HIGH);
+        delay(5);
+        Wire.begin(SDA, SCL);
+        s_i2c_initialized = true;
+    }
+
+    // Try MAX17048 I2C fuel gauge at 0x36
+    Wire.beginTransmission(0x36);
+    Wire.write(0x02); // VCELL register
+    if (Wire.endTransmission() == 0) {
+        if (Wire.requestFrom((uint8_t)0x36, (size_t)2) == 2) {
+            uint16_t raw_v = (Wire.read() << 8) | Wire.read();
+            g_battery_voltage = (raw_v * 78.125f) / 1000000.0f;
+            g_battery_is_lipo = true;
+        }
+        Wire.beginTransmission(0x36);
+        Wire.write(0x04); // SOC register
+        if (Wire.endTransmission() == 0) {
+            if (Wire.requestFrom((uint8_t)0x36, (size_t)2) == 2) {
+                uint16_t raw_soc = (Wire.read() << 8) | Wire.read();
+                g_battery_percent = constrain((int)(raw_soc / 256), 0, 100);
+            }
+        }
+    } else {
+        // Fallback: USB powered without LiPo battery
+        g_battery_is_lipo = false;
+        g_battery_voltage = 5.0f;
+        g_battery_percent = 100;
+    }
+}
+
 float readBatteryVoltage() {
-    analogReadResolution(12);
-    uint32_t raw = analogRead(PIN_VBAT);
-    float voltage = (raw / 4095.0f) * 3.3f * 2.0f;
-    return voltage;
+    readBatteryStatus();
+    return g_battery_voltage;
 }
 
 int calculateBatteryPercentage(float voltage) {
-    if (voltage >= 4.18f) return 100;
-    if (voltage <= 3.30f) return 0;
-    int pct = (int)((voltage - 3.30f) / (4.18f - 3.30f) * 100.0f);
-    return constrain(pct, 0, 100);
+    return g_battery_percent;
 }
 
 uint32_t calculateSleepSeconds(const std::string& query_time) {
@@ -336,6 +388,48 @@ String buildPortalHtml() {
         wifiOptions = "<option value=\"\">No networks found (type below)</option>";
     }
 
+    struct StationItem { const char* code; const char* name; };
+    const StationItem stList[] = {
+        {"SUTTN", "Sutton"},
+        {"HOWTH", "Howth"},
+        {"BYSDE", "Bayside"},
+        {"KBRCK", "Kilbarrack"},
+        {"RAHNY", "Raheny"},
+        {"HMDWN", "Harmonstown"},
+        {"KLSTR", "Killester"},
+        {"CNNLY", "Dublin Connolly"},
+        {"TARA",  "Tara Street"},
+        {"PERSE", "Dublin Pearse"},
+        {"GCDK",  "Grand Canal Dock"},
+        {"LDWNE", "Lansdowne Road"},
+        {"DLGHY", "Dun Laoghaire"},
+        {"BRAY",  "Bray"},
+        {"GSTNS", "Greystones"},
+        {"MLHT",  "Malahide"}
+    };
+
+    String stationHtml = "";
+    for (const auto& s : stList) {
+        stationHtml += "<option value=\"" + String(s.code) + "\"" + (g_station_code == s.code ? " selected" : "") + ">" + String(s.name) + " (" + String(s.code) + ")</option>\n";
+    }
+
+    String dirHtml = "";
+    dirHtml += "<option value=\"Southbound\"" + String(g_direction == "Southbound" ? " selected" : "") + ">Southbound (towards Bray/Greystones)</option>\n";
+    dirHtml += "<option value=\"Northbound\"" + String(g_direction == "Northbound" ? " selected" : "") + ">Northbound (towards Howth/Malahide)</option>\n";
+    dirHtml += "<option value=\"Both\"" + String(g_direction == "Both" ? " selected" : "") + ">Both Directions</option>\n";
+
+    String themeHtml = "";
+    themeHtml += "<option value=\"0\"" + String(!g_reverse_mode ? " selected" : "") + ">Standard (Black on White)</option>\n";
+    themeHtml += "<option value=\"1\"" + String(g_reverse_mode ? " selected" : "") + ">Reverse (White on Black)</option>\n";
+
+    String schedHtml = "";
+    schedHtml += "<option value=\"1\"" + String(g_schedule_enabled ? " selected" : "") + ">Enabled (Clock & Weather 7pm - 6am)</option>\n";
+    schedHtml += "<option value=\"0\"" + String(!g_schedule_enabled ? " selected" : "") + ">Disabled (Always Live Trains)</option>\n";
+
+    String modeHtml = "";
+    modeHtml += "<option value=\"1\"" + String(g_test_mode ? " selected" : "") + ">Desk / Test Mode (Web Preview + Serial ASCII)</option>\n";
+    modeHtml += "<option value=\"0\"" + String(!g_test_mode ? " selected" : "") + ">Battery Wall Frame (Deep Sleep)</option>\n";
+
     String html = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -365,69 +459,113 @@ String buildPortalHtml() {
     <label for="ssid">Select Wi-Fi Network</label>
     <select name="ssid" id="ssid" onchange="if(this.value!='') document.getElementById('manual_ssid').value=this.value;">
 )rawliteral";
-
     html += wifiOptions;
     html += R"rawliteral(
-    </select>
-    <label for="manual_ssid">Or Enter Hidden SSID</label>
-    <input type="text" name="manual_ssid" id="manual_ssid" placeholder="Network Name">
+      </select>
+      <label for="manual_ssid">Or Enter Hidden SSID</label>
+      <input type="text" name="manual_ssid" id="manual_ssid" placeholder="Leave blank to keep current network">
 
-    <label for="password">Wi-Fi Password</label>
-    <input type="password" name="password" id="password" placeholder="Password">
+      <label for="password">Wi-Fi Password</label>
+      <input type="password" name="password" id="password" placeholder="Leave blank to keep current password">
 
-    <label for="station">DART Station</label>
-    <select name="station" id="station">
-      <option value="SUTTN">Sutton (SUTTN)</option>
-      <option value="HOWTH">Howth (HOWTH)</option>
-      <option value="BYSDE">Bayside (BYSDE)</option>
-      <option value="KBRCK">Kilbarrack (KBRCK)</option>
-      <option value="RAHNY">Raheny (RAHNY)</option>
-      <option value="HMDWN">Harmonstown (HMDWN)</option>
-      <option value="KLSTR">Killester (KLSTR)</option>
-      <option value="CNNLY">Dublin Connolly (CNNLY)</option>
-      <option value="TARA">Tara Street (TARA)</option>
-      <option value="PERSE">Dublin Pearse (PERSE)</option>
-      <option value="GCDK">Grand Canal Dock (GCDK)</option>
-      <option value="LDWNE">Lansdowne Road (LDWNE)</option>
-      <option value="DLGHY">Dun Laoghaire (DLGHY)</option>
-      <option value="BRAY">Bray (BRAY)</option>
-      <option value="GSTNS">Greystones (GSTNS)</option>
-      <option value="MLHT">Malahide (MLHT)</option>
-    </select>
+      <label for="station">DART Station</label>
+      <select name="station" id="station">
+)rawliteral";
+    html += stationHtml;
+    html += R"rawliteral(
+      </select>
 
-    <label for="direction">Direction Filter</label>
-    <select name="direction" id="direction">
-      <option value="Southbound">Southbound (towards Bray/Greystones)</option>
-      <option value="Northbound">Northbound (towards Howth/Malahide)</option>
-      <option value="Both">Both Directions</option>
-    </select>
+      <label for="direction">Direction Filter</label>
+      <select name="direction" id="direction">
+)rawliteral";
+    html += dirHtml;
+    html += R"rawliteral(
+      </select>
 
-    <label for="theme">Display Theme</label>
-    <select name="theme" id="theme">
-      <option value="0">Standard (Black on White)</option>
-      <option value="1">Reverse (White on Black)</option>
-    </select>
+      <label for="theme">Display Theme</label>
+      <select name="theme" id="theme">
+)rawliteral";
+    html += themeHtml;
+    html += R"rawliteral(
+      </select>
 
-    <label for="sched_en">Smart Scheduler</label>
-    <select name="sched_en" id="sched_en">
-      <option value="1">Enabled (Clock & Weather 7pm - 6am)</option>
-      <option value="0">Disabled (Always Live Trains)</option>
-    </select>
+      <label for="sched_en">Smart Scheduler</label>
+      <select name="sched_en" id="sched_en">
+)rawliteral";
+    html += schedHtml;
+    html += R"rawliteral(
+      </select>
 
-    <label for="op_mode">Operating Mode</label>
-    <select name="op_mode" id="op_mode">
-      <option value="1">Desk / Test Mode (Web Preview + Serial ASCII)</option>
-      <option value="0">Battery Wall Frame (Deep Sleep)</option>
-    </select>
+      <label for="op_mode">Operating Mode</label>
+      <select name="op_mode" id="op_mode">
+)rawliteral";
+    html += modeHtml;
+    html += R"rawliteral(
+      </select>
 
-    <button type="submit">💾 Save & Connect</button>
-  </form>
-  <div class="footer">DART Kitchen Display &bull; Adafruit ESP32-S3</div>
-</div>
+      <button type="submit">💾 Save Settings</button>
+    </form>
+    <a href="/" style="display:block; text-align:center; color:#38bdf8; font-size:14px; margin-top:16px; text-decoration:none; font-weight:600;">← Return to Live Preview</a>
+    <div class="footer">DART Kitchen Display &bull; Adafruit ESP32-S3</div>
+  </div>
+  </body>
+  </html>
+)rawliteral";
+    return html;
+}
+
+void handleSaveConfig() {
+    String ssid = webServer.arg("manual_ssid");
+    if (ssid.length() == 0) {
+        ssid = webServer.arg("ssid");
+    }
+    String pass = webServer.arg("password");
+    String station = webServer.arg("station");
+    String dir = webServer.arg("direction");
+    bool reverse = (webServer.arg("theme") == "1");
+    bool sched_en = (webServer.arg("sched_en") != "0");
+    bool test_mode = (webServer.arg("op_mode") != "0");
+
+    // Preserve existing credentials if omitted on web dashboard
+    if (ssid.length() == 0) {
+        ssid = g_wifi_ssid;
+    }
+    if (pass.length() == 0 && ssid == g_wifi_ssid) {
+        pass = g_wifi_password;
+    }
+
+    bool wifiChanged = (ssid != g_wifi_ssid || (pass.length() > 0 && pass != g_wifi_password));
+
+    Serial.printf("[CONFIG] Saved: SSID='%s', Station='%s', Dir='%s', Reverse=%d, Sched=%d, TestMode=%d\n",
+        ssid.c_str(), station.c_str(), dir.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
+
+    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19, test_mode);
+    loadConfig();
+
+    if (wifiChanged) {
+        String response = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saved</title>
+<style>body{background:#0f172a;color:#f8fafc;font-family:sans-serif;text-align:center;padding:40px;}</style>
+</head>
+<body>
+  <h2>✓ Wi-Fi Settings Saved!</h2>
+  <p>The display is connecting to your new Wi-Fi network...</p>
 </body>
 </html>
 )rawliteral";
-    return html;
+        webServer.send(200, "text/html", response);
+        delay(1500);
+        Serial.println("[SETUP] Restarting ESP32 into new Wi-Fi network...");
+        ESP.restart();
+    } else {
+        // Station/display settings updated: immediately re-fetch and redirect to preview!
+        fetchAndRender();
+        webServer.sendHeader("Location", "/");
+        webServer.send(302, "text/plain", "");
+    }
 }
 
 void startCaptivePortal() {
@@ -451,42 +589,7 @@ void startCaptivePortal() {
         webServer.send(200, "text/html", buildPortalHtml());
     });
 
-    webServer.on("/save", HTTP_POST, []() {
-        String ssid = webServer.arg("manual_ssid");
-        if (ssid.length() == 0) {
-            ssid = webServer.arg("ssid");
-        }
-        String pass = webServer.arg("password");
-        String station = webServer.arg("station");
-        String dir = webServer.arg("direction");
-        bool reverse = (webServer.arg("theme") == "1");
-        bool sched_en = (webServer.arg("sched_en") != "0");
-        bool test_mode = (webServer.arg("op_mode") != "0");
-
-        Serial.printf("[SETUP] Received: SSID='%s', Station='%s', Dir='%s', Reverse=%d, Sched=%d, TestMode=%d\n",
-            ssid.c_str(), station.c_str(), dir.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
-
-        saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19, test_mode);
-
-        String response = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Saved</title>
-<style>body{background:#0f172a;color:#f8fafc;font-family:sans-serif;text-align:center;padding:40px;}</style>
-</head>
-<body>
-  <h2>✓ Settings Saved!</h2>
-  <p>The display is connecting to your Wi-Fi and loading live trains...</p>
-</body>
-</html>
-)rawliteral";
-        webServer.send(200, "text/html", response);
-        delay(1500);
-
-        Serial.println("[SETUP] Restarting ESP32 into normal mode...");
-        ESP.restart();
-    });
+    webServer.on("/save", HTTP_POST, handleSaveConfig);
 
     // Captive Portal redirection endpoints (iOS, Android, Windows)
     webServer.on("/hotspot-detect.html", []() {
@@ -518,6 +621,8 @@ void startCaptivePortal() {
 }
 
 String buildPreviewHtml() {
+    String bmpB64 = base64::encode(g_bmp_buffer, g_bmp_size);
+
     String html = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -551,18 +656,22 @@ String buildPreviewHtml() {
   <p class="sub">Planned hardware e-paper output rendered on-chip by Adafruit ESP32-S3</p>
 
   <div class="screen-frame">
-    <img class="preview" src="/screen.bmp" alt="Waveshare 2.13 E-Paper Display Preview">
+    <img class="preview" src="data:image/bmp;base64,)rawliteral" + bmpB64 + R"rawliteral(" alt="Waveshare 2.13 E-Paper Display Preview">
   </div>
 
   <div class="meta">
 )rawliteral";
 
-    float vbat = readBatteryVoltage();
-    int batPct = calculateBatteryPercentage(vbat);
+    String batInfo;
+    if (g_battery_is_lipo) {
+        batInfo = String(g_battery_percent) + "% (" + String(g_battery_voltage, 2) + "V)";
+    } else {
+        batInfo = "USB Powered (Full)";
+    }
 
     html += "<div>Station: <b>" + String(g_last_board.station_name.c_str()) + "</b></div>";
     html += "<div>Query Time: <b>" + String(g_last_board.query_time.c_str()) + "</b></div>";
-    html += "<div>Battery: <b>" + String(batPct) + "% (" + String(vbat, 2) + "V)</b></div>";
+    html += "<div>Battery: <b>" + batInfo + "</b></div>";
     html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
 
     html += R"rawliteral(
@@ -571,6 +680,7 @@ String buildPreviewHtml() {
   <div class="actions">
     <a href="/refresh" class="btn">🔄 Refresh Trains Now</a>
     <a href="/toggle-theme" class="btn btn-sec">🌓 Toggle Theme</a>
+    <a href="/config" class="btn btn-sec">⚙️ Settings & Station</a>
   </div>
 
   <div class="footer">
@@ -583,9 +693,25 @@ String buildPreviewHtml() {
     return html;
 }
 
+void redrawCanvas() {
+    g_canvas.clear(false);
+    int curHour = g_last_board.query_time.length() >= 2 ? std::atoi(g_last_board.query_time.substr(0, 2).c_str()) : 12;
+    if (g_schedule_enabled && (curHour < g_schedule_start_hour || curHour >= g_schedule_end_hour)) {
+        Serial.println("[Schedule] Down period active: Rendering Standby Clock & Tomorrow's Weather.");
+        g_canvas.render_clock_weather_screen(g_last_board.station_name, g_last_board.query_time, "NIGHT STANDBY", 15, 9, 50, g_battery_percent, g_schedule_start_hour);
+    } else {
+        g_canvas.render_commute_board(g_last_board, g_battery_percent, g_direction.c_str());
+    }
+    if (g_reverse_mode) {
+        g_canvas.invert_canvas();
+    }
+
+    // Export 250x122 1-bit BMP for live browser preview
+    g_bmp_size = g_canvas.export_bmp_buffer(g_bmp_buffer, sizeof(g_bmp_buffer));
+}
+
 void fetchAndRender() {
-    float vbat = readBatteryVoltage();
-    int batPct = calculateBatteryPercentage(vbat);
+    readBatteryStatus();
 
     char url[200];
     snprintf(url, sizeof(url),
@@ -596,6 +722,7 @@ void fetchAndRender() {
     std::string xmlResponse = "";
     HTTPClient http;
     http.begin(url);
+    http.setTimeout(4000); // 4-second timeout to prevent server hanging
     int httpCode = http.GET();
     if (httpCode == HTTP_CODE_OK) {
         xmlResponse = http.getString().c_str();
@@ -609,27 +736,14 @@ void fetchAndRender() {
         g_last_board = dart::Parser::parse_station_xml(xmlResponse, g_direction.c_str());
         Serial.printf("[Data] Parsed %s: %d trains at %s\n",
             g_last_board.station_name.c_str(), (int)g_last_board.departures.size(), g_last_board.query_time.c_str());
-    } else {
+    } else if (g_last_board.station_name.empty()) {
         g_last_board.success = false;
         g_last_board.station_name = g_station_code.c_str();
         g_last_board.query_time = "--:--";
         g_last_board.error_message = "Irish Rail API Offline";
     }
 
-    g_canvas.clear(false);
-    int curHour = g_last_board.query_time.length() >= 2 ? std::atoi(g_last_board.query_time.substr(0, 2).c_str()) : 12;
-    if (g_schedule_enabled && (curHour < g_schedule_start_hour || curHour >= g_schedule_end_hour)) {
-        Serial.println("[Schedule] Down period active: Rendering Standby Clock & Tomorrow's Weather.");
-        g_canvas.render_clock_weather_screen(g_last_board.station_name, g_last_board.query_time, "NIGHT STANDBY", 15, 9, 50, batPct, g_schedule_start_hour);
-    } else {
-        g_canvas.render_commute_board(g_last_board, batPct, g_direction.c_str());
-    }
-    if (g_reverse_mode) {
-        g_canvas.invert_canvas();
-    }
-
-    // 1. Export 250x122 1-bit BMP for live browser preview
-    g_bmp_size = g_canvas.export_bmp_buffer(g_bmp_buffer, sizeof(g_bmp_buffer));
+    redrawCanvas();
 
     // 2. Print ASCII visualizer directly to Serial Monitor
     Serial.println("\n[E-PAPER SCREEN PREVIEW]");
@@ -645,10 +759,18 @@ void fetchAndRender() {
 
 void setupPreviewServer() {
     webServer.on("/", HTTP_GET, []() {
+        webServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        webServer.sendHeader("Pragma", "no-cache");
+        webServer.sendHeader("Expires", "0");
+        webServer.sendHeader("Connection", "close");
         webServer.send(200, "text/html", buildPreviewHtml());
     });
     webServer.on("/screen.bmp", HTTP_GET, []() {
         if (g_bmp_size > 0) {
+            webServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            webServer.sendHeader("Pragma", "no-cache");
+            webServer.sendHeader("Expires", "0");
+            webServer.sendHeader("Connection", "close");
             webServer.send_P(200, "image/bmp", (const char*)g_bmp_buffer, g_bmp_size);
         } else {
             webServer.send(404, "text/plain", "BMP not ready");
@@ -657,14 +779,30 @@ void setupPreviewServer() {
     webServer.on("/refresh", HTTP_GET, []() {
         fetchAndRender();
         webServer.sendHeader("Location", "/");
+        webServer.sendHeader("Connection", "close");
         webServer.send(302, "text/plain", "");
     });
     webServer.on("/toggle-theme", HTTP_GET, []() {
         g_reverse_mode = !g_reverse_mode;
-        fetchAndRender();
+        prefs.begin("dart_cfg", false);
+        prefs.putBool("reverse", g_reverse_mode);
+        prefs.end();
+        redrawCanvas(); // Instant: redraws buffer in RAM in under 1ms!
         webServer.sendHeader("Location", "/");
+        webServer.sendHeader("Connection", "close");
         webServer.send(302, "text/plain", "");
     });
+    webServer.on("/config", HTTP_GET, []() {
+        webServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        webServer.sendHeader("Connection", "close");
+        webServer.send(200, "text/html", buildPortalHtml());
+    });
+    webServer.on("/setup", HTTP_GET, []() {
+        webServer.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        webServer.sendHeader("Connection", "close");
+        webServer.send(200, "text/html", buildPortalHtml());
+    });
+    webServer.on("/save", HTTP_POST, handleSaveConfig);
     webServer.begin();
 }
 
@@ -736,6 +874,7 @@ void setup() {
 
     // 5. Initial Fetch and Render
     fetchAndRender();
+    g_last_refresh_ms = millis();
 
     // 6. Test Mode vs Battery Deep Sleep Mode
     if (g_test_mode) {
@@ -757,9 +896,6 @@ void setup() {
         esp_deep_sleep_start();
     }
 }
-
-// Global auto-refresh timer for Test Mode
-uint32_t g_last_refresh_ms = 0;
 
 void loop() {
     if (g_test_mode) {
