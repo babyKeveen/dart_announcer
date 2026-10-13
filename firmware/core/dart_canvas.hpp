@@ -12,13 +12,14 @@ namespace dart {
 
 class Canvas {
 public:
-    static constexpr int WIDTH = 250;
-    static constexpr int HEIGHT = 122;
-    static constexpr int EPD_BUFFER_SIZE = 4000; // 16 bytes * 250 rows
+    static constexpr int WIDTH = 800;
+    static constexpr int HEIGHT = 480;
+    static constexpr int EPD_BUFFER_SIZE = 48000; // 800 * 480 / 8 bytes
 
 private:
-    // 0 = White, 1 = Black
-    uint8_t pixels[WIDTH * HEIGHT];
+    // Waveshare 7.5" V2 native layout: 1 bit per pixel (800 x 480 / 8 = 48,000 bytes)
+    // 1 = White, 0 = Black (native UC8179 / PIL mode 1 / BMP format)
+    uint8_t buffer[EPD_BUFFER_SIZE];
 
 public:
     Canvas() {
@@ -26,24 +27,32 @@ public:
     }
 
     void clear(bool black = false) {
-        std::memset(pixels, black ? 1 : 0, sizeof(pixels));
+        std::memset(buffer, black ? 0x00 : 0xFF, sizeof(buffer));
     }
 
     void invert_canvas() {
-        for (size_t i = 0; i < sizeof(pixels); ++i) {
-            pixels[i] = pixels[i] ? 0 : 1;
+        for (size_t i = 0; i < sizeof(buffer); ++i) {
+            buffer[i] = ~buffer[i];
         }
     }
 
     inline void set_pixel(int x, int y, bool black) {
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
-            pixels[y * WIDTH + x] = black ? 1 : 0;
+            int byte_idx = y * 100 + (x >> 3);
+            uint8_t mask = 0x80 >> (x & 7);
+            if (black) {
+                buffer[byte_idx] &= ~mask;
+            } else {
+                buffer[byte_idx] |= mask;
+            }
         }
     }
 
     inline bool get_pixel(int x, int y) const {
         if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
-            return pixels[y * WIDTH + x] != 0;
+            int byte_idx = y * 100 + (x >> 3);
+            uint8_t mask = 0x80 >> (x & 7);
+            return (buffer[byte_idx] & mask) == 0; // true if black
         }
         return false;
     }
@@ -78,8 +87,13 @@ public:
     }
 
     void fill_rect(int x, int y, int w, int h, bool black) {
-        for (int j = y; j < y + h; ++j) {
-            for (int i = x; i < x + w; ++i) {
+        if (w <= 0 || h <= 0) return;
+        int x2 = std::min(WIDTH - 1, x + w - 1);
+        int y2 = std::min(HEIGHT - 1, y + h - 1);
+        int x1 = std::max(0, x);
+        int y1 = std::max(0, y);
+        for (int j = y1; j <= y2; ++j) {
+            for (int i = x1; i <= x2; ++i) {
                 set_pixel(i, j, black);
             }
         }
@@ -117,21 +131,31 @@ public:
         return (int)text.length() * (6 * scale) - (1 * scale);
     }
 
-    void draw_battery(int x, int y, int percentage) {
+    void draw_battery(int x, int y, int percentage, bool color = false, int scale = 2) {
         percentage = std::max(0, std::min(100, percentage));
-        // Battery body (width: 18, height: 9)
-        draw_rect(x, y, 18, 9, true);
-        // Battery positive terminal nub
-        fill_rect(x + 18, y + 2, 2, 5, true);
+        int bw = 18 * scale;
+        int bh = 9 * scale;
+        int nub_w = 2 * scale;
+        int nub_h = 5 * scale;
 
-        // Fill inner gauge
-        int fill_width = (percentage * 14) / 100;
+        // Battery body outline
+        draw_rect(x, y, bw, bh, color);
+        // Positive terminal nub
+        fill_rect(x + bw, y + (bh - nub_h) / 2, nub_w, nub_h, color);
+
+        // Clear interior to opposite color first
+        bool bg = !color;
+        fill_rect(x + scale, y + scale, bw - 2 * scale, bh - 2 * scale, bg);
+
+        // Fill inner gauge proportional to percentage
+        int max_fill = bw - 4 * scale;
+        int fill_width = (percentage * max_fill) / 100;
         if (fill_width > 0) {
-            fill_rect(x + 2, y + 2, fill_width, 5, true);
+            fill_rect(x + 2 * scale, y + 2 * scale, fill_width, bh - 4 * scale, color);
         }
     }
 
-    // High-level kitchen morning commute board layout
+    // High-level 800x480 kitchen commute board layout for Waveshare 7.5" HAT
     void render_commute_board(
         const BoardData& board,
         int battery_percent = -1,
@@ -139,125 +163,159 @@ public:
         int rain_chance = -1,
         float temp_c = -99.0f
     ) {
-        clear(false); // White background
+        clear(false); // Crisp white background
 
-        // 1. Header (Black banner with white text)
-        fill_rect(0, 0, WIDTH, 19, true);
+        // 1. Header (Black banner with white text, Y: 0 to 66)
+        fill_rect(0, 0, WIDTH, 66, true);
 
         // Station name + direction badge
         std::string title = board.station_name.empty() ? "DART COMMUTE" : board.station_name;
         std::transform(title.begin(), title.end(), title.begin(), ::toupper);
+        title = "DART • " + title;
+        draw_string(24, 18, title, false, 4); // White text, scale 4 (20x28)
+        int title_w = get_string_width(title, 4);
+
         if (!filter_dir.empty() && filter_dir != "Both") {
-            title += (filter_dir == "Southbound") ? " [SB]" : " [NB]";
-        }
-        draw_string(4, 3, title, false, 2); // White text, scale 2 (10x14)
-        int title_w = get_string_width(title, 2);
-
-        // Clock & Battery on top-right
-        int right_pos = WIDTH - 4;
-        if (battery_percent >= 0) {
-            draw_battery(right_pos - 20, 5, battery_percent);
-            right_pos -= 26;
+            std::string dir_badge = "[" + filter_dir + "]";
+            std::transform(dir_badge.begin(), dir_badge.end(), dir_badge.begin(), ::toupper);
+            draw_string(24 + title_w + 14, 26, dir_badge, false, 2);
         }
 
+        // Digital Clock on top-right
         std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
-        int clock_w = get_string_width(clock, 2);
-        int clock_x = right_pos - clock_w;
-        draw_string(clock_x, 3, clock, false, 2);
+        int clock_w = get_string_width(clock, 4);
+        int clock_x = WIDTH - clock_w - 24;
+        draw_string(clock_x, 18, clock, false, 4);
 
-        // Center Header Rain Badge (if space permits)
+        // Battery Module next to Clock
+        int bat_anchor = clock_x - 20;
+        if (battery_percent >= 0) {
+            draw_battery(bat_anchor - 42, 24, battery_percent, false, 2);
+            std::string bat_str = std::to_string(battery_percent) + "%";
+            int bs_w = get_string_width(bat_str, 2);
+            draw_string(bat_anchor - 48 - bs_w, 26, bat_str, false, 2);
+            bat_anchor = bat_anchor - 54 - bs_w;
+        }
+
+        // Center Header Rain Badge
         if (rain_chance >= 0) {
             std::string rain_hdr = std::to_string(rain_chance) + "% RAIN";
-            int rh_w = get_string_width(rain_hdr, 1);
-            int available = clock_x - (4 + title_w);
-            if (available >= rh_w + 10) {
-                int rh_x = (4 + title_w) + (available - rh_w) / 2;
-                draw_string(rh_x, 6, rain_hdr, false, 1);
+            if (temp_c > -50.0f) {
+                char tbuf[16];
+                snprintf(tbuf, sizeof(tbuf), " (%.1fC)", temp_c);
+                rain_hdr += tbuf;
+            }
+            int rh_w = get_string_width(rain_hdr, 2);
+            int available = bat_anchor - (24 + title_w + 160);
+            if (available >= rh_w) {
+                int rh_x = (24 + title_w + 160) + (available - rh_w) / 2;
+                draw_string(rh_x, 26, rain_hdr, false, 2);
             }
         }
 
-        // 2. Departures Section (Rows at Y: 22, 50, 78)
+        // 2. Sub-Header Info Strip (Y: 72 to 98)
+        std::string sub_info = "STATION: " + (board.station_code.empty() ? "DART" : board.station_code) +
+                               "  •  FEED: IRISH RAIL REAL-TIME  •  UPDATED: " + clock;
+        draw_string(24, 76, sub_info, true, 2);
+        draw_line(20, 98, WIDTH - 20, 98, true);
+
+        // 3. Column Headers Strip (Y: 104 to 134)
+        fill_rect(20, 104, WIDTH - 40, 30, true);
+        draw_string(36, 111, "#", false, 2);
+        draw_string(80, 111, "DESTINATION", false, 2);
+        draw_string(440, 111, "DUE IN", false, 2);
+        draw_string(570, 111, "EXPECTED", false, 2);
+        draw_string(690, 111, "STATUS", false, 2);
+
+        // 4. Departures Table (Up to 5 rows, Y: 138 to 430)
         if (!board.success && !board.error_message.empty()) {
-            draw_string(10, 45, "ERROR CONNECTING TO API", true, 2);
-            draw_string(10, 70, board.error_message.substr(0, 30), true, 1);
+            draw_string(140, 240, "ERROR CONNECTING TO IRISH RAIL API", true, 3);
+            draw_string(180, 280, board.error_message.substr(0, 45), true, 2);
         } else if (board.departures.empty()) {
-            draw_string(15, 45, "NO UPCOMING DART TRAINS", true, 2);
-            draw_string(25, 70, "CHECK TIMETABLE (NEXT 90 MIN)", true, 1);
+            draw_string(160, 240, "NO UPCOMING DART DEPARTURES", true, 3);
+            draw_string(220, 280, "CHECK TIMETABLE (NEXT 90 MIN)", true, 2);
         } else {
-            int y_starts[3] = {23, 51, 79};
-            size_t max_rows = std::min((size_t)3, board.departures.size());
+            int y_starts[5] = {142, 198, 254, 310, 366};
+            size_t max_rows = std::min((size_t)5, board.departures.size());
 
             for (size_t i = 0; i < max_rows; ++i) {
                 const auto& dep = board.departures[i];
                 int row_y = y_starts[i];
 
-                // Subtle dotted divider between rows
-                if (i > 0) {
-                    for (int dx = 2; dx < WIDTH - 2; dx += 3) {
-                        set_pixel(dx, row_y - 2, true);
-                    }
-                }
+                // Horizontal row divider line
+                draw_line(20, row_y + 52, WIDTH - 20, row_y + 52, true);
 
-                // Train number circle / index badge
+                // Row index number (1, 2, 3, 4, 5)
                 std::string idx_str = std::to_string(i + 1);
-                draw_string(5, row_y + 3, idx_str, true, 2);
+                draw_string(36, row_y + 14, idx_str, true, 3);
 
                 // Destination name (bold/large)
                 std::string dest = dep.destination;
                 std::transform(dest.begin(), dest.end(), dest.begin(), ::toupper);
-                // Truncate if destination name is very long
-                if (dest.length() > 11) {
-                    dest = dest.substr(0, 10) + ".";
+                if (dest.length() > 18) {
+                    dest = dest.substr(0, 17) + ".";
                 }
-                draw_string(22, row_y + 3, dest, true, 2);
+                draw_string(80, row_y + 14, dest, true, 3);
 
-                // Due in time
+                // Due in time (clean typography, no bounding box)
                 std::string due_text;
                 if (dep.due_in <= 0) {
                     due_text = "DUE";
                 } else {
-                    due_text = std::to_string(dep.due_in) + "m";
+                    due_text = std::to_string(dep.due_in) + " MIN";
+                }
+                draw_string(440, row_y + 14, due_text, true, 3);
+
+                // Expected clock time
+                std::string exp_time = dep.expected.empty() ? "--:--" : dep.expected;
+                draw_string(570, row_y + 14, exp_time, true, 3);
+
+                // Status column
+                std::string st = dep.status;
+                if (st.empty() || st == "No Information") {
+                    st = "ON TIME";
+                } else {
+                    std::transform(st.begin(), st.end(), st.begin(), ::toupper);
                 }
 
-                int due_w = get_string_width(due_text, 2);
-                int time_x = WIDTH - due_w - 6;
-                draw_string(time_x, row_y + 3, due_text, true, 2);
-
-                // Expected clock time next to destination if room
-                if (!dep.expected.empty() && dest.length() <= 8) {
-                    draw_string(132, row_y + 5, dep.expected, true, 1);
+                if (st.find("DELAY") != std::string::npos || st.find("LATE") != std::string::npos) {
+                    int sw = get_string_width(st, 2);
+                    fill_rect(684, row_y + 12, sw + 12, 24, true);
+                    draw_string(690, row_y + 16, st, false, 2);
+                } else {
+                    draw_string(690, row_y + 16, st, true, 2);
                 }
             }
         }
 
-        // 3. Footer Bar (Y: 106 to 121)
-        draw_line(0, 106, WIDTH - 1, 106, true);
-        draw_string(4, 110, "LIVE IRISH RAIL REALTIME", true, 1);
+        // 5. Footer Bar (Y: 436 to 480)
+        draw_line(0, 436, WIDTH - 1, 436, true);
+        draw_string(24, 450, "LIVE IRISH RAIL REALTIME API  •  NEXT AUTO-REFRESH IN 60s", true, 2);
 
         std::string footer_status;
         if (rain_chance >= 0) {
-            footer_status = "RAIN: " + std::to_string(rain_chance) + "%";
+            footer_status = "RAIN CHANCE: " + std::to_string(rain_chance) + "%";
             if (temp_c > -50.0f) {
                 char tbuf[16];
-                snprintf(tbuf, sizeof(tbuf), "%.0fC ", temp_c);
+                snprintf(tbuf, sizeof(tbuf), "%.0fC  •  ", temp_c);
                 footer_status = std::string(tbuf) + footer_status;
             }
         } else {
             footer_status = "DART COMMUTE";
         }
 
-        int fs_w = get_string_width(footer_status, 1);
-        int fs_x = WIDTH - fs_w - 4;
+        int fs_w = get_string_width(footer_status, 2);
+        int fs_x = WIDTH - fs_w - 24;
 
         if (rain_chance >= 40) {
-            fill_rect(fs_x - 3, 108, fs_w + 6, 12, true);
-            draw_string(fs_x, 110, footer_status, false, 1);
+            fill_rect(fs_x - 6, 444, fs_w + 12, 26, true);
+            draw_string(fs_x, 450, footer_status, false, 2);
         } else {
-            draw_string(fs_x, 110, footer_status, true, 1);
+            draw_string(fs_x, 450, footer_status, true, 2);
         }
     }
 
-    // Scheduled Down Period: Clock & Tomorrow's Weather Screen (250x122)
+    // Scheduled Down Period: Clock & Tomorrow's Weather Screen (800x480)
     void render_clock_weather_screen(
         const std::string& station_name,
         const std::string& time_str,
@@ -271,159 +329,132 @@ public:
         clear(false); // White background
 
         // 1. Header (Black banner with white text)
-        fill_rect(0, 0, WIDTH, 19, true);
+        fill_rect(0, 0, WIDTH, 66, true);
         std::string title = station_name + " STANDBY";
         std::transform(title.begin(), title.end(), title.begin(), ::toupper);
-        if (title.length() > 16) title = title.substr(0, 15) + ".";
-        draw_string(4, 3, title, false, 2);
+        title = "DART • " + title;
+        draw_string(24, 18, title, false, 4);
 
-        // Battery on top-right
         if (battery_percent >= 0) {
-            draw_battery(WIDTH - 24, 5, battery_percent);
+            draw_battery(WIDTH - 70, 24, battery_percent, false, 2);
+            std::string bat_str = std::to_string(battery_percent) + "%";
+            int bs_w = get_string_width(bat_str, 2);
+            draw_string(WIDTH - 76 - bs_w, 26, bat_str, false, 2);
         }
 
         // 2. Main split: Big Digital Clock (left) & Tomorrow's Forecast (right)
-        // Clock at scale 3 (15x21 per char)
+        // Clock at scale 6 (30x42 per char)
         std::string clk = time_str.empty() ? "23:45" : time_str;
-        draw_string(6, 26, clk, true, 3);
+        draw_string(40, 130, clk, true, 6);
 
         // Date below clock
-        std::string dt = date_str.empty() ? "NIGHT MODE" : date_str;
-        draw_string(8, 54, dt, true, 1);
+        std::string dt = date_str.empty() ? "NIGHT STANDBY MODE" : date_str;
+        draw_string(44, 200, dt, true, 3);
 
-        // Schedule status note below date
-        char sched_buf[32];
+        // Schedule status note
+        char sched_buf[48];
         snprintf(sched_buf, sizeof(sched_buf), "RESUMES %02d:00 AM", resume_hour);
-        draw_rect(6, 68, 106, 18, true);
-        draw_string(10, 73, sched_buf, true, 1);
+        draw_rect(44, 250, 260, 40, true);
+        draw_string(60, 260, sched_buf, true, 3);
 
-        draw_string(8, 92, "LOW POWER SLEEP", true, 1);
+        draw_string(44, 320, "LOW POWER DEEP SLEEP MODE", true, 2);
 
         // Vertical divider separating clock from weather
-        draw_line(120, 21, 120, 104, true);
+        draw_line(400, 80, 400, 420, true);
 
         // Right side: Tomorrow's Weather
-        fill_rect(124, 23, WIDTH - 128, 14, true);
-        draw_string(128, 26, "TOMORROW WEATHER", false, 1);
+        fill_rect(430, 96, 340, 36, true);
+        draw_string(446, 106, "TOMORROW COMMUTE WEATHER", false, 2);
 
-        // Temperature (scale 2)
+        // Temperature (scale 4)
         char temp_buf[32];
         snprintf(temp_buf, sizeof(temp_buf), "%dC / %dC", temp_max, temp_min);
-        draw_string(128, 42, temp_buf, true, 2);
+        draw_string(440, 156, temp_buf, true, 4);
 
         // Rain badge (inverted if rain >= 40%)
         char rain_buf[32];
-        snprintf(rain_buf, sizeof(rain_buf), "RAIN: %d%%", rain_chance);
-        int rw = get_string_width(rain_buf, 1);
+        snprintf(rain_buf, sizeof(rain_buf), "RAIN CHANCE: %d%%", rain_chance);
+        int rw = get_string_width(rain_buf, 3);
         if (rain_chance >= 40) {
-            fill_rect(126, 63, rw + 8, 16, true);
-            draw_string(130, 67, rain_buf, false, 1);
+            fill_rect(436, 230, rw + 16, 40, true);
+            draw_string(444, 238, rain_buf, false, 3);
         } else {
-            draw_rect(126, 63, rw + 8, 16, true);
-            draw_string(130, 67, rain_buf, true, 1);
+            draw_rect(436, 230, rw + 16, 40, true);
+            draw_string(444, 238, rain_buf, true, 3);
         }
 
         // Commuter advice
         if (rain_chance >= 40) {
-            draw_string(126, 83, "BRING UMBRELLA", true, 1);
+            draw_string(440, 300, "BRING UMBRELLA - HEAVY RAIN", true, 2);
         } else {
-            draw_string(126, 83, "CLEAR COMMUTE", true, 1);
+            draw_string(440, 300, "CLEAR COMMUTE - NO UMBRELLA NEEDED", true, 2);
         }
-        draw_string(126, 94, "DART NORMAL", true, 1);
+        draw_string(440, 335, "NORMAL SCHEDULED SERVICE EXPECTED", true, 2);
 
         // 3. Footer Bar
-        draw_line(0, 106, WIDTH - 1, 106, true);
-        draw_string(4, 110, "STANDBY CLOCK", true, 1);
-        std::string footer_status = "OPEN-METEO ENGINE";
-        int fs_w = get_string_width(footer_status, 1);
-        draw_string(WIDTH - fs_w - 4, 110, footer_status, true, 1);
+        draw_line(0, 436, WIDTH - 1, 436, true);
+        draw_string(24, 450, "STANDBY CLOCK & WEATHER  •  OPEN-METEO ENGINE", true, 2);
+        draw_string(WIDTH - 210, 450, "ADAFRUIT ESP32-S3", true, 2);
     }
 
-    // Wi-Fi Captive Portal Setup Screen
+    // Wi-Fi Captive Portal Setup Screen (800x480)
     void render_wifi_setup_screen(const std::string& ap_name) {
         clear(false); // White background
 
         // 1. Header (Black banner with white text)
-        fill_rect(0, 0, WIDTH, 19, true);
-        draw_string(24, 3, "WI-FI SETUP MODE", false, 2);
+        fill_rect(0, 0, WIDTH, 66, true);
+        draw_string(24, 18, "DART FRAME • WI-FI SETUP", false, 4);
 
         // 2. Body instructions
-        draw_string(8, 26, "1. Connect phone to Wi-Fi:", true, 1);
+        draw_string(40, 100, "1. Connect your phone or computer to the Wi-Fi hotspot:", true, 3);
 
         // Box around AP name
-        draw_rect(6, 38, WIDTH - 12, 22, true);
-        draw_string(14, 42, ap_name, true, 2);
+        draw_rect(40, 140, WIDTH - 80, 56, true);
+        draw_string(60, 152, ap_name, true, 4);
 
-        draw_string(8, 66, "2. A setup window will pop up.", true, 1);
-        draw_string(8, 78, "   Select Wi-Fi, enter password", true, 1);
-        draw_string(8, 90, "   and choose your station.", true, 1);
+        draw_string(40, 226, "2. A setup portal window will pop up automatically.", true, 3);
+        draw_string(40, 270, "   If not, open any browser and navigate to: http://192.168.4.1", true, 2);
+        draw_string(40, 310, "3. Select your home Wi-Fi network and enter password.", true, 3);
+        draw_string(40, 350, "4. Select your primary DART station and commute direction.", true, 3);
 
         // 3. Footer
-        draw_line(0, 106, WIDTH - 1, 106, true);
-        draw_string(4, 110, "PORTAL: 192.168.4.1", true, 1);
-        std::string portal_hint = "AUTO-AP CONNECT";
-        int ph_w = get_string_width(portal_hint, 1);
-        draw_string(WIDTH - ph_w - 4, 110, portal_hint, true, 1);
+        draw_line(0, 436, WIDTH - 1, 436, true);
+        draw_string(24, 450, "SETUP PORTAL: HTTP://192.168.4.1  •  PORT 80", true, 2);
+        draw_string(WIDTH - 220, 450, "WAVESHARE 7.5\" HAT", true, 2);
     }
 
-    // Export format matching Waveshare 2.13" V2 native RAM (16 bytes * 250 lines)
-    // 1 = White, 0 = Black
+    // Export format matching Waveshare 7.5" V2 native RAM (800 x 480 / 8 = 48,000 bytes)
+    // 1 = White, 0 = Black (native UC8179)
     void export_waveshare_v2_buffer(uint8_t* out_buf) const {
-        std::memset(out_buf, 0xFF, EPD_BUFFER_SIZE); // Default all white
-
-        for (int x = 0; x < WIDTH; ++x) {
-            for (int y = 0; y < HEIGHT; ++y) {
-                bool is_black = get_pixel(x, y);
-
-                // Rotate 90 degrees landscape into physical coordinates:
-                // x_phys = y (0..121), y_phys = 249 - x (0..249)
-                int x_phys = y;
-                int y_phys = (WIDTH - 1) - x;
-
-                if (x_phys >= 0 && x_phys < 128 && y_phys >= 0 && y_phys < 250) {
-                    int byte_idx = (x_phys / 8) + y_phys * 16;
-                    int bit_idx = 7 - (x_phys % 8);
-
-                    if (is_black) {
-                        out_buf[byte_idx] &= ~(1 << bit_idx); // Clear bit = Black
-                    } else {
-                        out_buf[byte_idx] |= (1 << bit_idx);  // Set bit = White
-                    }
-                }
-            }
-        }
+        std::memcpy(out_buf, buffer, EPD_BUFFER_SIZE);
     }
 
-    // Generate terminal preview string using Unicode half blocks for SSH inspection
+    // Generate terminal preview string downsampled to 100 columns for SSH inspection
     std::string generate_terminal_preview() const {
         std::string out;
-        out.reserve(WIDTH * (HEIGHT / 2 + 2) * 4);
+        out.reserve(102 * 62 * 4);
 
         out += "+";
-        for (int x = 0; x < WIDTH; ++x) out += "-";
+        for (int x = 0; x < 100; ++x) out += "-";
         out += "+\n";
 
-        for (int y = 0; y < HEIGHT; y += 2) {
+        for (int y = 0; y < HEIGHT; y += 8) {
             out += "|";
-            for (int x = 0; x < WIDTH; ++x) {
-                bool top = get_pixel(x, y);
-                bool bottom = (y + 1 < HEIGHT) ? get_pixel(x, y + 1) : false;
-
-                if (top && bottom) {
-                    out += "\u2588"; // Full black block █
-                } else if (top && !bottom) {
-                    out += "\u2580"; // Top half block ▀
-                } else if (!top && bottom) {
-                    out += "\u2584"; // Bottom half block ▄
-                } else {
-                    out += " ";      // Space (white)
+            for (int x = 0; x < WIDTH; x += 8) {
+                // Downsample 8x8 block
+                int black_count = 0;
+                for (int dy = 0; dy < 8; ++dy) {
+                    for (int dx = 0; dx < 8; ++dx) {
+                        if (get_pixel(x + dx, y + dy)) black_count++;
+                    }
                 }
+                out += (black_count >= 16) ? "\u2588" : " ";
             }
             out += "|\n";
         }
 
         out += "+";
-        for (int x = 0; x < WIDTH; ++x) out += "-";
+        for (int x = 0; x < 100; ++x) out += "-";
         out += "+\n";
 
         return out;
@@ -433,39 +464,57 @@ public:
         return generate_terminal_preview();
     }
 
-    // Save a standard uncompressed 1-bit Windows BMP image (250x122)
+    template <typename StreamT>
+    void print_ascii_screen(StreamT& out) const {
+        out.println("+----------------------------------------------------------------------------------------------------+");
+        char row_buf[104];
+        for (int y = 0; y < HEIGHT; y += 8) {
+            int idx = 0;
+            row_buf[idx++] = '|';
+            for (int x = 0; x < WIDTH; x += 8) {
+                int black_count = 0;
+                for (int dy = 0; dy < 8; ++dy) {
+                    for (int dx = 0; dx < 8; ++dx) {
+                        if (get_pixel(x + dx, y + dy)) black_count++;
+                    }
+                }
+                row_buf[idx++] = (black_count >= 16) ? '#' : ' ';
+            }
+            row_buf[idx++] = '|';
+            row_buf[idx] = '\0';
+            out.println(row_buf);
+        }
+        out.println("+----------------------------------------------------------------------------------------------------+");
+    }
+
+    // Save a standard uncompressed 1-bit Windows BMP image (800x480, 48,062 bytes)
     bool save_bmp(const std::string& path) const {
         std::ofstream f(path, std::ios::binary);
         if (!f.is_open()) return false;
 
-        int row_bytes = ((WIDTH + 31) / 32) * 4; // 32-bit aligned row size
-        int image_size = row_bytes * HEIGHT;
-        int file_size = 14 + 40 + 8 + image_size;
+        int row_bytes = 100; // 800 / 8 = 100 bytes (multiple of 4)
+        int image_size = row_bytes * HEIGHT; // 48,000 bytes
+        int file_size = 14 + 40 + 8 + image_size; // 48,062 bytes
 
         uint8_t file_header[14] = {
             'B', 'M',
             (uint8_t)(file_size & 0xFF), (uint8_t)((file_size >> 8) & 0xFF),
             (uint8_t)((file_size >> 16) & 0xFF), (uint8_t)((file_size >> 24) & 0xFF),
             0, 0, 0, 0,
-            62, 0, 0, 0 // Offset to pixel data (14 + 40 + 8 = 62)
+            62, 0, 0, 0
         };
 
         uint8_t info_header[40] = {
             40, 0, 0, 0,
             (uint8_t)(WIDTH & 0xFF), (uint8_t)((WIDTH >> 8) & 0xFF), 0, 0,
             (uint8_t)(HEIGHT & 0xFF), (uint8_t)((HEIGHT >> 8) & 0xFF), 0, 0,
-            1, 0,       // 1 color plane
-            1, 0,       // 1 bit per pixel
-            0, 0, 0, 0, // No compression
+            1, 0, 1, 0, 0, 0, 0, 0,
             (uint8_t)(image_size & 0xFF), (uint8_t)((image_size >> 8) & 0xFF),
             (uint8_t)((image_size >> 16) & 0xFF), (uint8_t)((image_size >> 24) & 0xFF),
-            0, 0, 0, 0,
-            0, 0, 0, 0,
-            2, 0, 0, 0, // 2 colors used
-            0, 0, 0, 0
+            0, 0, 0, 0, 0, 0, 0, 0,
+            2, 0, 0, 0, 0, 0, 0, 0
         };
 
-        // Color table: Index 0 = Black, Index 1 = White
         uint8_t color_table[8] = {
             0, 0, 0, 0,       // Color 0: Black
             255, 255, 255, 0  // Color 1: White
@@ -476,27 +525,18 @@ public:
         f.write((char*)color_table, 8);
 
         // BMP rows are stored bottom-to-top
-        std::vector<uint8_t> row(row_bytes, 0);
         for (int y = HEIGHT - 1; y >= 0; --y) {
-            std::fill(row.begin(), row.end(), 0);
-            for (int x = 0; x < WIDTH; ++x) {
-                bool black = get_pixel(x, y);
-                if (!black) {
-                    // White is bit 1
-                    row[x / 8] |= (1 << (7 - (x % 8)));
-                }
-            }
-            f.write((char*)row.data(), row_bytes);
+            f.write((char*)(buffer + y * 100), 100);
         }
 
         return true;
     }
 
-    // Export 250x122 uncompressed 1-bit BMP directly to a memory buffer (3,966 bytes)
+    // Export 800x480 uncompressed 1-bit BMP directly to memory buffer (48,062 bytes)
     size_t export_bmp_buffer(uint8_t* out, size_t max_len) const {
-        int row_bytes = ((WIDTH + 31) / 32) * 4; // 32 bytes per row
-        int image_size = row_bytes * HEIGHT;     // 3,904 bytes
-        int file_size = 14 + 40 + 8 + image_size; // 3,966 bytes
+        int row_bytes = 100;
+        int image_size = row_bytes * HEIGHT;
+        int file_size = 14 + 40 + 8 + image_size;
         if (max_len < (size_t)file_size || out == nullptr) return 0;
 
         uint8_t file_header[14] = {
@@ -504,7 +544,7 @@ public:
             (uint8_t)(file_size & 0xFF), (uint8_t)((file_size >> 8) & 0xFF),
             (uint8_t)((file_size >> 16) & 0xFF), (uint8_t)((file_size >> 24) & 0xFF),
             0, 0, 0, 0,
-            62, 0, 0, 0 // Offset to pixel data
+            62, 0, 0, 0
         };
 
         uint8_t info_header[40] = {
@@ -524,22 +564,16 @@ public:
         };
 
         size_t offset = 0;
-        memcpy(out + offset, file_header, 14); offset += 14;
-        memcpy(out + offset, info_header, 40); offset += 40;
-        memcpy(out + offset, color_table, 8);  offset += 8;
+        std::memcpy(out + offset, file_header, 14); offset += 14;
+        std::memcpy(out + offset, info_header, 40); offset += 40;
+        std::memcpy(out + offset, color_table, 8);  offset += 8;
 
         for (int y = HEIGHT - 1; y >= 0; --y) {
-            uint8_t* row_ptr = out + offset;
-            memset(row_ptr, 0, row_bytes);
-            for (int x = 0; x < WIDTH; ++x) {
-                if (!get_pixel(x, y)) {
-                    row_ptr[x / 8] |= (1 << (7 - (x % 8)));
-                }
-            }
-            offset += row_bytes;
+            std::memcpy(out + offset, buffer + y * 100, 100);
+            offset += 100;
         }
 
-        return offset;
+        return file_size;
     }
 };
 

@@ -88,7 +88,7 @@ int    g_schedule_end_hour   = 19;  // 7 PM
 //   2. Hosts a live Web Server at http://<ESP32-IP>/ with a pixel-perfect 250x122 display preview!
 //   3. Stays awake over USB without resetting connection.
 bool   g_test_mode = true;
-uint8_t g_bmp_buffer[4096];
+uint8_t g_bmp_buffer[48062];
 size_t g_bmp_size = 0;
 dart::BoardData g_last_board;
 uint32_t g_last_refresh_ms = 0;
@@ -120,23 +120,7 @@ void redrawCanvas();
 void readBatteryStatus();
 void fetchWeather();
 
-// ================== WAVESHARE 2.13" V2 LUT & DRIVER =============
-const unsigned char lut_full_update[] = {
-    0x80,0x60,0x40,0x00,0x00,0x00,0x00,
-    0x10,0x60,0x20,0x00,0x00,0x00,0x00,
-    0x80,0x60,0x40,0x00,0x00,0x00,0x00,
-    0x10,0x60,0x20,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-    0x03,0x03,0x00,0x00,0x02,
-    0x09,0x09,0x00,0x00,0x02,
-    0x03,0x03,0x00,0x00,0x02,
-    0x00,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,
-    0x15,0x41,0xA8,0x32,0x30,0x0A
-};
-
+// ================== WAVESHARE 7.5" V2 (UC8179) DRIVER =============
 void epdSendCommand(uint8_t command) {
     digitalWrite(PIN_EPD_DC, LOW);
     digitalWrite(PIN_EPD_CS, LOW);
@@ -153,12 +137,13 @@ void epdSendData(uint8_t data) {
 
 void epdWaitBusy() {
     uint32_t start = millis();
+    // BUSY pin: 0 = Idle, 1 = Busy
     while (digitalRead(PIN_EPD_BUSY) == HIGH) {
-        if (millis() - start > 100) { // Fast 100ms timeout so disconnected panel never stalls web server
+        if (millis() - start > 15000) { // 15-second safety timeout so disconnected panel never stalls web server
             Serial.println("[Display] Busy timeout (no display attached or busy line high). Skipping wait.");
             break;
         }
-        delay(5);
+        delay(10);
     }
 }
 
@@ -166,7 +151,7 @@ void epdReset() {
     digitalWrite(PIN_EPD_RST, HIGH);
     delay(20);
     digitalWrite(PIN_EPD_RST, LOW);
-    delay(10);
+    delay(2);
     digitalWrite(PIN_EPD_RST, HIGH);
     delay(20);
 }
@@ -182,88 +167,78 @@ void epdInit() {
         SPI.begin(36, -1, 35, PIN_EPD_CS); // SCK=36, MISO=none, MOSI=35, CS=10
         s_spi_initialized = true;
     }
-    SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    SPI.beginTransaction(SPISettings(10000000, MSBFIRST, SPI_MODE0));
 
     epdReset();
     epdWaitBusy();
 
-    epdSendCommand(0x12); // Soft reset
-    epdWaitBusy();
+    // Power Setting
+    epdSendCommand(0x01);
+    epdSendData(0x07);
+    epdSendData(0x07);
+    epdSendData(0x3f);
+    epdSendData(0x3f);
 
-    epdSendCommand(0x74); // Analog block control
-    epdSendData(0x54);
-    epdSendCommand(0x7E); // Digital block control
-    epdSendData(0x3B);
-
-    epdSendCommand(0x01); // Driver output control (250 lines)
-    epdSendData(0xF9);
-    epdSendData(0x00);
-    epdSendData(0x00);
-
-    epdSendCommand(0x11); // Data entry mode
-    epdSendData(0x01);
-
-    epdSendCommand(0x44); // RAM-X address start/end (0x00 to 0x0F -> 16 bytes)
-    epdSendData(0x00);
-    epdSendData(0x0F);
-
-    epdSendCommand(0x45); // RAM-Y address start/end (249 to 0)
-    epdSendData(0xF9);
-    epdSendData(0x00);
-    epdSendData(0x00);
-    epdSendData(0x00);
-
-    epdSendCommand(0x3C); // Border waveform
-    epdSendData(0x03);
-
-    epdSendCommand(0x2C); // VCOM voltage
-    epdSendData(0x55);
-
-    epdSendCommand(0x03);
-    epdSendData(lut_full_update[70]);
-
+    // Power ON
     epdSendCommand(0x04);
-    epdSendData(lut_full_update[71]);
-    epdSendData(lut_full_update[72]);
-    epdSendData(lut_full_update[73]);
-
-    epdSendCommand(0x3A); // Dummy line
-    epdSendData(lut_full_update[74]);
-    epdSendCommand(0x3B); // Gate time
-    epdSendData(lut_full_update[75]);
-
-    epdSendCommand(0x32); // Load LUT
-    for (int i = 0; i < 70; i++) {
-        epdSendData(lut_full_update[i]);
-    }
-
-    epdSendCommand(0x4E); // Set RAM X address count to 0
-    epdSendData(0x00);
-    epdSendCommand(0x4F); // Set RAM Y address count to 249
-    epdSendData(0xF9);
-    epdSendData(0x00);
+    delay(100);
     epdWaitBusy();
+
+    // Panel Setting (800x480, B/W mode)
+    epdSendCommand(0x00);
+    epdSendData(0x1F); // KW-3f   KWR-2F  BWROTP 0f  BWOTP 1f
+
+    // Resolution: 800 x 480
+    epdSendCommand(0x61);
+    epdSendData(0x03); // 800 = 0x0320
+    epdSendData(0x20);
+    epdSendData(0x01); // 480 = 0x01E0
+    epdSendData(0xE0);
+
+    // Dual SPI: Disable
+    epdSendCommand(0x15);
+    epdSendData(0x00);
+
+    // VCOM and data interval
+    epdSendCommand(0x50);
+    epdSendData(0x10);
+    epdSendData(0x07);
+
+    // TCON setting
+    epdSendCommand(0x60);
+    epdSendData(0x22);
 }
 
 void epdDisplay(const uint8_t* buffer) {
-    epdSendCommand(0x24);
-    for (int i = 0; i < dart::Canvas::EPD_BUFFER_SIZE; i++) {
-        epdSendData(buffer[i]);
+    // 0x10 = Old data (transmit white)
+    epdSendCommand(0x10);
+    digitalWrite(PIN_EPD_DC, HIGH);
+    digitalWrite(PIN_EPD_CS, LOW);
+    uint8_t ff_block[256];
+    memset(ff_block, 0xFF, sizeof(ff_block));
+    for (int i = 0; i < dart::Canvas::EPD_BUFFER_SIZE / 256; i++) {
+        SPI.writeBytes(ff_block, sizeof(ff_block));
     }
+    digitalWrite(PIN_EPD_CS, HIGH);
 
-    // Refresh display
-    epdSendCommand(0x22);
-    epdSendData(0xC7);
-    epdSendCommand(0x20);
+    // 0x13 = New data (black/white bitmap)
+    epdSendCommand(0x13);
+    digitalWrite(PIN_EPD_DC, HIGH);
+    digitalWrite(PIN_EPD_CS, LOW);
+    SPI.writeBytes(buffer, dart::Canvas::EPD_BUFFER_SIZE);
+    digitalWrite(PIN_EPD_CS, HIGH);
+
+    // Display Refresh
+    epdSendCommand(0x12);
+    delay(100);
     epdWaitBusy();
 }
 
 void epdSleep() {
-    epdSendCommand(0x10); // Enter deep sleep
-    epdSendData(0x01);
-    SPI.endTransaction();
-    delay(50);
-    digitalWrite(PIN_EPD_RST, LOW);
+    epdSendCommand(0x02); // Power OFF
+    epdWaitBusy();
+    epdSendCommand(0x07); // Deep sleep
+    epdSendData(0xA5);
 }
 
 // ======================== BATTERY TELEMETRY ========================
@@ -667,8 +642,6 @@ void startCaptivePortal() {
 }
 
 String buildPreviewHtml() {
-    String bmpB64 = base64::encode(g_bmp_buffer, g_bmp_size);
-
     String html = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -676,16 +649,16 @@ String buildPreviewHtml() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="60">
-  <title>ESP32 DART Display - Live Preview</title>
+  <title>ESP32 DART Display - Live Preview (800x480)</title>
   <style>
     :root { --bg: #0f172a; --card: #1e293b; --accent: #22c55e; }
     body { background: var(--bg); color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 24px 16px; margin: 0; }
-    .card { max-width: 580px; margin: 0 auto; background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-    h1 { margin-top: 0; font-size: 22px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .card { max-width: 860px; margin: 0 auto; background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    h1 { margin-top: 0; font-size: 22px; display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
     p.sub { color: #94a3b8; font-size: 14px; margin-top: -6px; margin-bottom: 20px; }
-    .screen-frame { background: #334155; padding: 14px; border-radius: 8px; display: inline-block; margin-bottom: 16px; }
-    img.preview { width: 500px; height: 244px; image-rendering: pixelated; border: 2px solid #000; border-radius: 4px; display: block; }
-    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 16px; background: #0f172a; padding: 10px; border-radius: 6px; }
+    .screen-frame { background: #334155; padding: 14px; border-radius: 8px; display: inline-block; margin-bottom: 16px; width: 100%; max-width: 820px; box-sizing: border-box; }
+    img.preview { width: 100%; max-width: 800px; height: auto; aspect-ratio: 800 / 480; image-rendering: pixelated; border: 2px solid #000; border-radius: 4px; display: block; margin: 0 auto; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 16px; background: #0f172a; padding: 10px; border-radius: 6px; }
     .meta b { color: #38bdf8; }
     .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
     a.btn { background: var(--accent); color: #000; font-weight: bold; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-size: 14px; }
@@ -698,11 +671,15 @@ String buildPreviewHtml() {
 </head>
 <body>
 <div class="card">
-  <h1>🚆 DART Kitchen Display <span class="badge">WAVESHARE 2.13" PREVIEW</span></h1>
-  <p class="sub">Planned hardware e-paper output rendered on-chip by Adafruit ESP32-S3</p>
+  <h1>🚆 DART Kitchen Display <span class="badge">WAVESHARE 7.5" PREVIEW (800×480)</span></h1>
+  <p class="sub">Planned hardware e-paper output rendered on-chip by Adafruit ESP32-S3 for Waveshare 7.5" HAT</p>
 
   <div class="screen-frame">
-    <img class="preview" src="data:image/bmp;base64,)rawliteral" + bmpB64 + R"rawliteral(" alt="Waveshare 2.13 E-Paper Display Preview">
+)rawliteral";
+
+    html += "<img class=\"preview\" src=\"/screen.bmp?t=" + String(millis()) + "\" alt=\"Waveshare 7.5 E-Paper Display Preview\">";
+
+    html += R"rawliteral(
   </div>
 
   <div class="meta">
@@ -725,6 +702,7 @@ String buildPreviewHtml() {
     html += "<div>Rain Chance: <b>" + rainInfo + "</b></div>";
     html += "<div>Battery: <b>" + batInfo + "</b></div>";
     html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
+    html += "<div>Resolution: <b>800×480</b></div>";
 
     html += R"rawliteral(
   </div>
@@ -733,10 +711,11 @@ String buildPreviewHtml() {
     <a href="/refresh" class="btn">🔄 Refresh Trains Now</a>
     <a href="/toggle-theme" class="btn btn-sec">🌓 Toggle Theme</a>
     <a href="/config" class="btn btn-sec">⚙️ Settings & Station</a>
+    <a href="/screen.bmp" target="_blank" class="btn btn-sec">🖼️ View BMP</a>
   </div>
 
   <div class="footer">
-    Auto-refreshes every 60s &bull; ESP32-S3 Native Output &bull; No Raspberry Pi Required
+    Auto-refreshes every 60s &bull; ESP32-S3 Native Output &bull; Waveshare 7.5" HAT (800x480)
   </div>
 </div>
 </body>
@@ -761,7 +740,7 @@ void redrawCanvas() {
         g_canvas.invert_canvas();
     }
 
-    // Export 250x122 1-bit BMP for live browser preview
+    // Export 800x480 1-bit BMP for live browser preview
     g_bmp_size = g_canvas.export_bmp_buffer(g_bmp_buffer, sizeof(g_bmp_buffer));
 }
 
@@ -805,9 +784,9 @@ void fetchAndRender() {
     Serial.println("\n[E-PAPER SCREEN PREVIEW]");
     g_canvas.print_ascii_screen(Serial);
 
-    // 3. Update physical Waveshare 2.13" V2 Display (safe timeout if disconnected)
+    // 3. Update physical Waveshare 7.5" HAT Display (safe timeout if disconnected)
     g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
-    Serial.println("Updating Waveshare 2.13\" V2 e-paper (safe timeout if disconnected)...");
+    Serial.println("Updating Waveshare 7.5\" HAT e-paper (safe timeout if disconnected)...");
     epdInit();
     epdDisplay(g_epd_buffer);
     epdSleep();
