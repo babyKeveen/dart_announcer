@@ -534,7 +534,7 @@ String buildPreviewHtml() {
     p.sub { color: #94a3b8; font-size: 14px; margin-top: -6px; margin-bottom: 20px; }
     .screen-frame { background: #334155; padding: 14px; border-radius: 8px; display: inline-block; margin-bottom: 16px; }
     img.preview { width: 500px; height: 244px; image-rendering: pixelated; border: 2px solid #000; border-radius: 4px; display: block; }
-    .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 16px; background: #0f172a; padding: 10px; border-radius: 6px; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; font-size: 13px; color: #cbd5e1; margin-bottom: 16px; background: #0f172a; padding: 10px; border-radius: 6px; }
     .meta b { color: #38bdf8; }
     .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
     a.btn { background: var(--accent); color: #000; font-weight: bold; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-size: 14px; }
@@ -557,8 +557,12 @@ String buildPreviewHtml() {
   <div class="meta">
 )rawliteral";
 
+    float vbat = readBatteryVoltage();
+    int batPct = calculateBatteryPercentage(vbat);
+
     html += "<div>Station: <b>" + String(g_last_board.station_name.c_str()) + "</b></div>";
     html += "<div>Query Time: <b>" + String(g_last_board.query_time.c_str()) + "</b></div>";
+    html += "<div>Battery: <b>" + String(batPct) + "% (" + String(vbat, 2) + "V)</b></div>";
     html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
 
     html += R"rawliteral(

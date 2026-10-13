@@ -117,17 +117,21 @@ public:
         return (int)text.length() * (6 * scale) - (1 * scale);
     }
 
-    void draw_battery(int x, int y, int percentage) {
+    void draw_battery(int x, int y, int percentage, bool color = false) {
         percentage = std::max(0, std::min(100, percentage));
-        // Battery body (width: 18, height: 9)
-        draw_rect(x, y, 18, 9, true);
-        // Battery positive terminal nub
-        fill_rect(x + 18, y + 2, 2, 5, true);
+        // Battery body outline (width: 18, height: 9)
+        draw_rect(x, y, 18, 9, color);
+        // Positive terminal nub (width: 2, height: 5)
+        fill_rect(x + 18, y + 2, 2, 5, color);
 
-        // Fill inner gauge
+        // Clear interior to background color first
+        bool bg = !color;
+        fill_rect(x + 1, y + 1, 16, 7, bg);
+
+        // Fill inner gauge proportional to percentage (up to 14 pixels wide, 5 pixels tall)
         int fill_width = (percentage * 14) / 100;
         if (fill_width > 0) {
-            fill_rect(x + 2, y + 2, fill_width, 5, true);
+            fill_rect(x + 2, y + 2, fill_width, 5, color);
         }
     }
 
