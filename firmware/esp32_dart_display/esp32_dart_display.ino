@@ -98,6 +98,11 @@ float g_battery_voltage = 4.2f;
 int   g_battery_percent = 100;
 bool  g_battery_is_lipo = false;
 
+// Weather Telemetry (Open-Meteo live rain & temperature)
+int      g_rain_chance     = -1;
+float    g_temperature     = -99.0f;
+uint32_t g_last_weather_ms = 0;
+
 // Static working buffers in BSS — avoids FreeRTOS 8KB stack overflow!
 static dart::Canvas g_canvas;
 static uint8_t      g_epd_buffer[dart::Canvas::EPD_BUFFER_SIZE];
@@ -113,6 +118,7 @@ void setStatusLed(uint8_t r, uint8_t g, uint8_t b) {
 void fetchAndRender();
 void redrawCanvas();
 void readBatteryStatus();
+void fetchWeather();
 
 // ================== WAVESHARE 2.13" V2 LUT & DRIVER =============
 const unsigned char lut_full_update[] = {
@@ -303,6 +309,46 @@ float readBatteryVoltage() {
 
 int calculateBatteryPercentage(float voltage) {
     return g_battery_percent;
+}
+
+// ======================== WEATHER TELEMETRY ========================
+void fetchWeather() {
+    // Only re-fetch weather every 15 minutes (or on initial boot)
+    if (g_rain_chance >= 0 && millis() - g_last_weather_ms < 900000) {
+        return;
+    }
+
+    HTTPClient http;
+    // Open-Meteo free keyless API for Dublin DART corridor (Sutton: 53.387N, -6.120W)
+    http.begin("http://api.open-meteo.com/v1/forecast?latitude=53.387&longitude=-6.120&current=temperature_2m,precipitation_probability");
+    http.setTimeout(3000);
+    int httpCode = http.GET();
+    if (httpCode == HTTP_CODE_OK) {
+        String payload = http.getString();
+        int currentIdx = payload.indexOf("\"current\":");
+        if (currentIdx >= 0) {
+            int rainIdx = payload.indexOf("\"precipitation_probability\":", currentIdx);
+            if (rainIdx >= 0) {
+                int endIdx = payload.indexOf("}", rainIdx);
+                int commaIdx = payload.indexOf(",", rainIdx);
+                int splitIdx = (commaIdx >= 0 && commaIdx < endIdx) ? commaIdx : endIdx;
+                g_rain_chance = payload.substring(rainIdx + 28, splitIdx).toInt();
+                g_last_weather_ms = millis();
+                Serial.printf("[Weather] Precipitation probability: %d%%\n", g_rain_chance);
+            }
+            int tempIdx = payload.indexOf("\"temperature_2m\":", currentIdx);
+            if (tempIdx >= 0) {
+                int commaIdx = payload.indexOf(",", tempIdx);
+                int braceIdx = payload.indexOf("}", tempIdx);
+                int splitIdx = (commaIdx >= 0 && commaIdx < braceIdx) ? commaIdx : braceIdx;
+                g_temperature = payload.substring(tempIdx + 17, splitIdx).toFloat();
+                Serial.printf("[Weather] Temperature: %.1fC\n", g_temperature);
+            }
+        }
+    } else {
+        Serial.printf("[Weather] Open-Meteo fetch failed (code %d)\n", httpCode);
+    }
+    http.end();
 }
 
 uint32_t calculateSleepSeconds(const std::string& query_time) {
@@ -669,8 +715,14 @@ String buildPreviewHtml() {
         batInfo = "USB Powered (Full)";
     }
 
+    String rainInfo = (g_rain_chance >= 0) ? (String(g_rain_chance) + "%") : "--%";
+    if (g_temperature > -50.0f) {
+        rainInfo += " (" + String(g_temperature, 1) + "°C)";
+    }
+
     html += "<div>Station: <b>" + String(g_last_board.station_name.c_str()) + "</b></div>";
     html += "<div>Query Time: <b>" + String(g_last_board.query_time.c_str()) + "</b></div>";
+    html += "<div>Rain Chance: <b>" + rainInfo + "</b></div>";
     html += "<div>Battery: <b>" + batInfo + "</b></div>";
     html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
 
@@ -698,9 +750,12 @@ void redrawCanvas() {
     int curHour = g_last_board.query_time.length() >= 2 ? std::atoi(g_last_board.query_time.substr(0, 2).c_str()) : 12;
     if (g_schedule_enabled && (curHour < g_schedule_start_hour || curHour >= g_schedule_end_hour)) {
         Serial.println("[Schedule] Down period active: Rendering Standby Clock & Tomorrow's Weather.");
-        g_canvas.render_clock_weather_screen(g_last_board.station_name, g_last_board.query_time, "NIGHT STANDBY", 15, 9, 50, g_battery_percent, g_schedule_start_hour);
+        int rain = (g_rain_chance >= 0) ? g_rain_chance : 50;
+        int tmax = (g_temperature > -50.0f) ? (int)(g_temperature + 2) : 15;
+        int tmin = (g_temperature > -50.0f) ? (int)(g_temperature - 3) : 9;
+        g_canvas.render_clock_weather_screen(g_last_board.station_name, g_last_board.query_time, "NIGHT STANDBY", tmax, tmin, rain, g_battery_percent, g_schedule_start_hour);
     } else {
-        g_canvas.render_commute_board(g_last_board, g_battery_percent, g_direction.c_str());
+        g_canvas.render_commute_board(g_last_board, g_battery_percent, g_direction.c_str(), g_rain_chance, g_temperature);
     }
     if (g_reverse_mode) {
         g_canvas.invert_canvas();
@@ -712,6 +767,7 @@ void redrawCanvas() {
 
 void fetchAndRender() {
     readBatteryStatus();
+    fetchWeather();
 
     char url[200];
     snprintf(url, sizeof(url),

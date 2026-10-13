@@ -132,7 +132,13 @@ public:
     }
 
     // High-level kitchen morning commute board layout
-    void render_commute_board(const BoardData& board, int battery_percent = -1, const std::string& filter_dir = "") {
+    void render_commute_board(
+        const BoardData& board,
+        int battery_percent = -1,
+        const std::string& filter_dir = "",
+        int rain_chance = -1,
+        float temp_c = -99.0f
+    ) {
         clear(false); // White background
 
         // 1. Header (Black banner with white text)
@@ -145,6 +151,7 @@ public:
             title += (filter_dir == "Southbound") ? " [SB]" : " [NB]";
         }
         draw_string(4, 3, title, false, 2); // White text, scale 2 (10x14)
+        int title_w = get_string_width(title, 2);
 
         // Clock & Battery on top-right
         int right_pos = WIDTH - 4;
@@ -155,7 +162,19 @@ public:
 
         std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
         int clock_w = get_string_width(clock, 2);
-        draw_string(right_pos - clock_w, 3, clock, false, 2);
+        int clock_x = right_pos - clock_w;
+        draw_string(clock_x, 3, clock, false, 2);
+
+        // Center Header Rain Badge (if space permits)
+        if (rain_chance >= 0) {
+            std::string rain_hdr = std::to_string(rain_chance) + "% RAIN";
+            int rh_w = get_string_width(rain_hdr, 1);
+            int available = clock_x - (4 + title_w);
+            if (available >= rh_w + 10) {
+                int rh_x = (4 + title_w) + (available - rh_w) / 2;
+                draw_string(rh_x, 6, rain_hdr, false, 1);
+            }
+        }
 
         // 2. Departures Section (Rows at Y: 22, 50, 78)
         if (!board.success && !board.error_message.empty()) {
@@ -214,9 +233,28 @@ public:
         // 3. Footer Bar (Y: 106 to 121)
         draw_line(0, 106, WIDTH - 1, 106, true);
         draw_string(4, 110, "LIVE IRISH RAIL REALTIME", true, 1);
-        std::string footer_status = "DART COMMUTE";
+
+        std::string footer_status;
+        if (rain_chance >= 0) {
+            footer_status = "RAIN: " + std::to_string(rain_chance) + "%";
+            if (temp_c > -50.0f) {
+                char tbuf[16];
+                snprintf(tbuf, sizeof(tbuf), "%.0fC ", temp_c);
+                footer_status = std::string(tbuf) + footer_status;
+            }
+        } else {
+            footer_status = "DART COMMUTE";
+        }
+
         int fs_w = get_string_width(footer_status, 1);
-        draw_string(WIDTH - fs_w - 4, 110, footer_status, true, 1);
+        int fs_x = WIDTH - fs_w - 4;
+
+        if (rain_chance >= 40) {
+            fill_rect(fs_x - 3, 108, fs_w + 6, 12, true);
+            draw_string(fs_x, 110, footer_status, false, 1);
+        } else {
+            draw_string(fs_x, 110, footer_status, true, 1);
+        }
     }
 
     // Scheduled Down Period: Clock & Tomorrow's Weather Screen (250x122)
