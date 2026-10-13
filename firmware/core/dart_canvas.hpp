@@ -252,33 +252,33 @@ public:
         // 1. Header (Black banner with white text, Y: 0 to 66)
         fill_rect(0, 0, WIDTH, 66, true);
 
-        // Station name + direction badge
-        std::string title = board.station_name.empty() ? "DART COMMUTE" : board.station_name;
-        std::transform(title.begin(), title.end(), title.begin(), ::toupper);
-        title = "DART • " + title;
-        draw_string(24, 18, title, false, 4); // White text, scale 4 (20x28)
-        int title_w = get_string_width(title, 4);
-
-        if (!filter_dir.empty() && filter_dir != "Both") {
-            std::string dir_badge = "[" + filter_dir + "]";
-            std::transform(dir_badge.begin(), dir_badge.end(), dir_badge.begin(), ::toupper);
-            draw_string(24 + title_w + 14, 26, dir_badge, false, 2);
-        }
-
         // Digital Clock on top-right (Large kitchen wall clock scale 5, 35px high)
         std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
         int clock_w = get_string_width(clock, 5);
         int clock_x = WIDTH - clock_w - 24;
         draw_string(clock_x, 15, clock, false, 5);
 
-        // Battery Module next to Clock
-        int bat_anchor = clock_x - 20;
-        if (battery_percent >= 0) {
-            draw_battery(bat_anchor - 42, 24, battery_percent, false, 2);
-            std::string bat_str = std::to_string(battery_percent) + "%";
-            int bs_w = get_string_width(bat_str, 2);
-            draw_string(bat_anchor - 48 - bs_w, 26, bat_str, false, 2);
-            bat_anchor = bat_anchor - 54 - bs_w;
+        // Station name + direction badge
+        std::string title = board.station_name.empty() ? "DART COMMUTE" : board.station_name;
+        std::transform(title.begin(), title.end(), title.begin(), ::toupper);
+        title = "DART • " + title;
+
+        int max_title_w = clock_x - 30;
+        if (!filter_dir.empty() && filter_dir != "Both") {
+            std::string dir_badge = "[" + filter_dir + "]";
+            std::transform(dir_badge.begin(), dir_badge.end(), dir_badge.begin(), ::toupper);
+            int dir_w = get_string_width(dir_badge, 2);
+            max_title_w -= (dir_w + 14);
+
+            int title_scale = (get_string_width(title, 4) > max_title_w) ? 3 : 4;
+            int title_y = (title_scale == 4) ? 18 : 22;
+            draw_string(24, title_y, title, false, title_scale);
+            int cur_title_w = get_string_width(title, title_scale);
+            draw_string(24 + cur_title_w + 14, 26, dir_badge, false, 2);
+        } else {
+            int title_scale = (get_string_width(title, 4) > max_title_w) ? 3 : 4;
+            int title_y = (title_scale == 4) ? 18 : 22;
+            draw_string(24, title_y, title, false, title_scale);
         }
 
         // 2. Weather Telemetry Strip (Large scale 3, 21px high, readable across room)
@@ -372,6 +372,16 @@ public:
                     draw_string(660, row_y + 16, st, true, 3);
                 }
             }
+        }
+
+        // 5. Battery Telemetry (Bottom Right, Y: 446 to 472)
+        if (battery_percent >= 0) {
+            std::string bat_str = std::to_string(battery_percent) + "%";
+            int bs_w = get_string_width(bat_str, 2);
+            int bat_icon_w = 40; // 18*scale + nub_w (36 + 4)
+            int bat_x = WIDTH - 24 - bat_icon_w;
+            draw_battery(bat_x, 448, battery_percent, true, 2);
+            draw_string(bat_x - bs_w - 10, 450, bat_str, true, 2);
         }
     }
 
