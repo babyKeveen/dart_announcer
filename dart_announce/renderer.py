@@ -576,6 +576,168 @@ def _render_clock_weather(
 
 
 # =====================================================================
+# RGB COLOR RENDERING FOR COLOR DISPLAYS (WAVESHARE 10-INCH COLOR PANELS)
+# =====================================================================
+def _render_solari_rgb(
+    result: DeparturesResult,
+    direction: str | None = None,
+    battery: int | None = None,
+) -> Image.Image:
+    """Render authentic 24-bit RGB Irish Rail Solari platform board for color displays."""
+    img = Image.new("RGB", (WIDTH, HEIGHT), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    font_station = _load_font("BebasNeue.ttf", 36)
+    font_clock = _load_font("BebasNeue.ttf", 44)
+    font_sub = _load_font("Oswald.ttf", 16)
+    font_th = _load_font("BebasNeue.ttf", 20)
+    font_dest = _load_font("BebasNeue.ttf", 32)
+    font_num = _load_font("BebasNeue.ttf", 28)
+    font_status = _load_font("BebasNeue.ttf", 22)
+    font_meta = _load_font("Oswald.ttf", 13)
+
+    # Outer enclosure bezel
+    draw.rectangle([(6, 6), (WIDTH - 6, HEIGHT - 6)], outline=(30, 41, 59), width=2)
+
+    now_str = datetime.now().strftime("%H:%M")
+
+    # Clock card (top-right)
+    clock_x1 = WIDTH - 146
+    clock_x2 = WIDTH - 14
+    draw.rectangle([(clock_x1, 14), (clock_x2, 68)], fill=(15, 23, 42))
+    draw.line([(clock_x1, 41), (clock_x2, 41)], fill=(51, 65, 85), width=1)
+    draw.text((clock_x1 + 18, 16), now_str, fill=(248, 250, 252), font=font_clock)
+
+    right_cursor = clock_x1
+
+    # Battery module
+    if battery is not None:
+        bat_level = max(0, min(100, battery))
+        bat_x1 = clock_x1 - 88
+        bat_x2 = clock_x1 - 8
+        draw.rectangle([(bat_x1, 14), (bat_x2, 68)], fill=(15, 23, 42))
+        draw.line([(bat_x1, 41), (bat_x2, 41)], fill=(51, 65, 85), width=1)
+        draw.text((bat_x1 + 10, 18), f"{bat_level}%", fill=(248, 250, 252), font=font_status)
+        ix, iy, iw, ih = bat_x1 + 14, 46, 32, 14
+        draw.rectangle([(ix, iy), (ix + iw, iy + ih)], outline=(248, 250, 252), width=1)
+        draw.rectangle([(ix + iw, iy + 3), (ix + iw + 2, iy + ih - 3)], fill=(248, 250, 252))
+        fill_w = int((iw - 4) * (bat_level / 100.0))
+        bat_col = (34, 197, 94) if bat_level > 20 else (239, 68, 68)
+        if fill_w > 0:
+            draw.rectangle([(ix + 2, iy + 2), (ix + 2 + fill_w, iy + ih - 2)], fill=bat_col)
+        right_cursor = bat_x1
+
+    # Weather card on top line (forecasted temperature & rain probability)
+    has_temp = result.temperature is not None
+    has_rain = result.rain_chance is not None
+    if has_temp or has_rain:
+        weather_w = 190 if (has_temp and has_rain) else 100
+        weather_x1 = right_cursor - weather_w - 8
+        weather_x2 = right_cursor - 8
+        draw.rectangle([(weather_x1, 14), (weather_x2, 68)], fill=(15, 23, 42))
+        draw.line([(weather_x1, 41), (weather_x2, 41)], fill=(51, 65, 85), width=1)
+        cur_x = weather_x1 + 10
+        if has_temp:
+            temp_str = f"{result.temperature:.1f}°C"
+            draw.text((cur_x, 16), temp_str, fill=(248, 250, 252), font=font_station)
+            cur_x += 80
+        if has_rain:
+            rain_bg = (2, 132, 199) if result.rain_chance >= 40 else (245, 158, 11)
+            rain_fg = (255, 255, 255) if result.rain_chance >= 40 else (28, 25, 23)
+            draw.rectangle([(cur_x, 24), (weather_x2 - 8, 58)], fill=rain_bg)
+            rain_str = f"{result.rain_chance}% RAIN"
+            draw.text((cur_x + 6, 28), rain_str, fill=rain_fg, font=font_sub)
+        plaque_right = weather_x1 - 8
+    else:
+        plaque_right = right_cursor - 8
+
+    # Station Header Plaque (DART Irish Rail Green #00843D)
+    plaque_left = 14
+    draw.rectangle([(plaque_left, 14), (plaque_right, 68)], fill=(0, 132, 61))
+    draw.line([(plaque_left, 41), (plaque_right, 41)], fill=(0, 100, 46), width=1)
+
+    heading = f"DART  •  {result.station_name.upper()}"
+    if direction:
+        heading += f" ({direction.upper()})"
+    draw.text((plaque_left + 16, 18), heading, fill=(255, 255, 255), font=font_station)
+
+    # Column Headers (Y: 76 to 104)
+    draw.rectangle([(14, 76), (WIDTH - 14, 104)], fill=(30, 41, 59))
+    draw.text((24, 78), "DESTINATION", fill=(248, 250, 252), font=font_th)
+    draw.text((432, 78), "DUE", fill=(248, 250, 252), font=font_th)
+    draw.text((544, 78), "EXPECTED", fill=(248, 250, 252), font=font_th)
+    draw.text((652, 78), "STATUS", fill=(248, 250, 252), font=font_th)
+
+    # Rows (expanded card height row_h=62, gap=6)
+    row_y = 110
+    row_h = 62
+    gap = 6
+
+    if result.departures:
+        for idx, d in enumerate(result.departures[:5]):
+            y = row_y + idx * (row_h + gap)
+            mid_y = y + row_h // 2
+
+            # 1. Destination Flap Card
+            dest_box = [(14, y), (420, y + row_h)]
+            draw.rectangle(dest_box, fill=(255, 255, 255), outline=(203, 213, 225), width=2)
+            draw.line([(14, mid_y), (420, mid_y)], fill=(226, 232, 240), width=1)
+            draw.text((24, y + 14), d.destination.upper(), fill=(15, 23, 42), font=font_dest)
+
+            # 2. Due Flap Card (Transit Amber highlight when DUE)
+            due_box = [(428, y), (532, y + row_h)]
+            if d.due_in <= 0:
+                draw.rectangle(due_box, fill=(245, 158, 11))
+                draw.line([(428, mid_y), (532, mid_y)], fill=(217, 119, 6), width=1)
+                draw.text((456, y + 16), "DUE", fill=(28, 25, 23), font=font_num)
+            elif d.due_in <= 3:
+                draw.rectangle(due_box, fill=(254, 243, 199), outline=(253, 230, 138), width=2)
+                draw.line([(428, mid_y), (532, mid_y)], fill=(253, 230, 138), width=1)
+                due_text = f"{d.due_in} MIN"
+                draw.text((440, y + 16), due_text, fill=(146, 64, 14), font=font_num)
+            else:
+                draw.rectangle(due_box, fill=(255, 255, 255), outline=(203, 213, 225), width=2)
+                draw.line([(428, mid_y), (532, mid_y)], fill=(226, 232, 240), width=1)
+                due_text = f"{d.due_in} MIN"
+                draw.text((440, y + 16), due_text, fill=(15, 23, 42), font=font_num)
+
+            # 3. Expected Time Flap Card
+            exp_box = [(540, y), (642, y + row_h)]
+            draw.rectangle(exp_box, fill=(255, 255, 255), outline=(203, 213, 225), width=2)
+            draw.line([(540, mid_y), (642, mid_y)], fill=(226, 232, 240), width=1)
+            draw.text((554, y + 16), d.expected, fill=(15, 23, 42), font=font_num)
+
+            # 4. Status Flap Card (Emerald green for On Time, Crimson for Delayed)
+            status_box = [(650, y), (WIDTH - 14, y + row_h)]
+            status_raw = d.status if d.status != "No Information" else "On Time"
+            st_lower = status_raw.lower()
+            if "late" in st_lower or "delay" in st_lower or "cancel" in st_lower:
+                draw.rectangle(status_box, fill=(254, 226, 226), outline=(252, 165, 165), width=2)
+                draw.line([(650, mid_y), (WIDTH - 14, mid_y)], fill=(254, 202, 202), width=1)
+                draw.text((664, y + 19), status_raw.upper(), fill=(220, 38, 38), font=font_status)
+            elif "on time" in st_lower or "early" in st_lower:
+                draw.rectangle(status_box, fill=(236, 253, 245), outline=(167, 243, 208), width=2)
+                draw.line([(650, mid_y), (WIDTH - 14, mid_y)], fill=(209, 250, 229), width=1)
+                draw.text((664, y + 19), status_raw.upper(), fill=(21, 128, 61), font=font_status)
+            else:
+                draw.rectangle(status_box, fill=(255, 255, 255), outline=(203, 213, 225), width=2)
+                draw.line([(650, mid_y), (WIDTH - 14, mid_y)], fill=(226, 232, 240), width=1)
+                draw.text((664, y + 19), status_raw.upper(), fill=(15, 23, 42), font=font_status)
+    else:
+        draw.rectangle([(14, 160), (WIDTH - 14, 320)], fill=(248, 250, 252), outline=(203, 213, 225), width=2)
+        draw.line([(14, 240), (WIDTH - 14, 240)], fill=(226, 232, 240), width=1)
+        draw.text((180, 220), "NO UPCOMING DEPARTURES SCHEDULED", fill=(100, 116, 139), font=font_station)
+
+    # Footer
+    y_footer = HEIGHT - 22
+    draw.line([(14, y_footer - 4), (WIDTH - 14, y_footer - 4)], fill=(203, 213, 225), width=1)
+    draw.text((16, y_footer), "LIVE IRISH RAIL REAL-TIME DATA  •  SOLARI SPLIT-FLAP TRANSIT DISPLAY", fill=(100, 116, 139), font=font_meta)
+    draw.text((WIDTH - 142, y_footer), "ADAFRUIT ESP32-S3", fill=(100, 116, 139), font=font_meta)
+
+    return img
+
+
+# =====================================================================
 # MAIN PUBLIC API
 # =====================================================================
 def render_screen_image(
@@ -586,8 +748,12 @@ def render_screen_image(
     mode: str = "auto",
     is_active: bool = True,
     resume_hour: int = 6,
+    color: bool = False,
 ) -> Image.Image:
-    """Render the departure board or down-period clock with tomorrow's weather onto 800x480 monochrome image."""
+    """Render the departure board or down-period clock with tomorrow's weather onto 800x480 image (monochrome or RGB if color=True)."""
+    if color:
+        return _render_solari_rgb(result, direction=direction, battery=battery)
+
     style_key = (style or "solari").strip().lower()
     is_reverse = style_key in ("reverse", "inverted", "dark")
 
@@ -612,6 +778,7 @@ def render_screen_png(
     mode: str = "auto",
     is_active: bool = True,
     resume_hour: int = 6,
+    color: bool = False,
 ) -> bytes:
     """Return PNG bytes of the 800x480 departure board or clock in chosen style."""
     img = render_screen_image(
@@ -622,6 +789,7 @@ def render_screen_png(
         mode=mode,
         is_active=is_active,
         resume_hour=resume_hour,
+        color=color,
     )
     buf = io.BytesIO()
     img.save(buf, format="PNG")

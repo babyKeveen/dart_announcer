@@ -125,3 +125,25 @@ def fetch_tomorrow_weather(latitude: float, longitude: float, timeout: float = 1
         condition=condition,
         symbol=symbol,
     )
+
+
+def fetch_temperature(latitude: float, longitude: float, timeout: float = 10.0) -> float:
+    """Return the forecasted current temperature in °C from Open-Meteo."""
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "current": "temperature_2m",
+        "timezone": "auto",
+    }
+    try:
+        response = httpx.get(BASE_URL, params=params, timeout=timeout)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise WeatherError(f"Failed to fetch temperature: {exc}") from exc
+
+    try:
+        data = response.json()
+        return float(data["current"]["temperature_2m"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise WeatherError(f"Failed to parse temperature: {exc}") from exc
+

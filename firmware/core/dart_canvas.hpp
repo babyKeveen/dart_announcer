@@ -119,16 +119,100 @@ public:
         int cur_x = x;
         int char_spacing = 1 * scale;
         int char_width = 5 * scale;
-        for (char c : text) {
-            draw_char(cur_x, y, c, black, scale);
+        size_t i = 0;
+        while (i < text.length()) {
+            unsigned char c = (unsigned char)text[i];
+            // Check for UTF-8 bullet '•' (0xE2 0x80 0xA2)
+            if (c == 0xE2 && i + 2 < text.length() && (unsigned char)text[i+1] == 0x80 && (unsigned char)text[i+2] == 0xA2) {
+                int dot_size = std::max(2, 2 * scale);
+                int dot_x = cur_x + (char_width - dot_size) / 2;
+                int dot_y = y + (7 * scale - dot_size) / 2;
+                fill_rect(dot_x, dot_y, dot_size, dot_size, black);
+                cur_x += char_width + char_spacing;
+                i += 3;
+                continue;
+            }
+            // Check for degree symbol '°' (0xC2 0xB0)
+            if (c == 0xC2 && i + 1 < text.length() && (unsigned char)text[i+1] == 0xB0) {
+                int d_size = std::max(2, 2 * scale);
+                draw_rect(cur_x + scale, y, d_size, d_size, black);
+                cur_x += char_width + char_spacing;
+                i += 2;
+                continue;
+            }
+            // Check for UTF-8 Irish vowels (á, é, í, ó, ú / Á, É, Í, Ó, Ú)
+            if (c == 0xC3 && i + 1 < text.length()) {
+                unsigned char c2 = (unsigned char)text[i+1];
+                char mapped = ' ';
+                switch (c2) {
+                    case 0xA1: mapped = 'a'; break; // á
+                    case 0x81: mapped = 'A'; break; // Á
+                    case 0xA9: mapped = 'e'; break; // é
+                    case 0x89: mapped = 'E'; break; // É
+                    case 0xAD: mapped = 'i'; break; // í
+                    case 0x8D: mapped = 'I'; break; // Í
+                    case 0xB3: mapped = 'o'; break; // ó
+                    case 0x93: mapped = 'O'; break; // Ó
+                    case 0xBA: mapped = 'u'; break; // ú
+                    case 0x9A: mapped = 'U'; break; // Ú
+                    default:   mapped = ' '; break;
+                }
+                draw_char(cur_x, y, mapped, black, scale);
+                cur_x += char_width + char_spacing;
+                i += 2;
+                continue;
+            }
+            // Check for UTF-8 dashes (en-dash 0xE2 0x80 0x93, em-dash 0xE2 0x80 0x94)
+            if (c == 0xE2 && i + 2 < text.length() && (unsigned char)text[i+1] == 0x80 && ((unsigned char)text[i+2] == 0x93 || (unsigned char)text[i+2] == 0x94)) {
+                draw_char(cur_x, y, '-', black, scale);
+                cur_x += char_width + char_spacing;
+                i += 3;
+                continue;
+            }
+            // Unknown non-ASCII byte: skip multi-byte UTF-8 sequence
+            if (c > 127) {
+                if ((c & 0xE0) == 0xC0) i += 2;
+                else if ((c & 0xF0) == 0xE0) i += 3;
+                else if ((c & 0xF8) == 0xF0) i += 4;
+                else i += 1;
+                continue;
+            }
+            draw_char(cur_x, y, (char)c, black, scale);
             cur_x += char_width + char_spacing;
+            i++;
         }
         return cur_x;
     }
 
     int get_string_width(const std::string& text, int scale = 1) const {
         if (text.empty()) return 0;
-        return (int)text.length() * (6 * scale) - (1 * scale);
+        int count = 0;
+        size_t i = 0;
+        while (i < text.length()) {
+            unsigned char c = (unsigned char)text[i];
+            if (c == 0xE2 && i + 2 < text.length() && (unsigned char)text[i+1] == 0x80 && (unsigned char)text[i+2] == 0xA2) {
+                count++;
+                i += 3;
+            } else if (c == 0xC2 && i + 1 < text.length() && (unsigned char)text[i+1] == 0xB0) {
+                count++;
+                i += 2;
+            } else if (c == 0xC3 && i + 1 < text.length()) {
+                count++;
+                i += 2;
+            } else if (c == 0xE2 && i + 2 < text.length() && (unsigned char)text[i+1] == 0x80 && ((unsigned char)text[i+2] == 0x93 || (unsigned char)text[i+2] == 0x94)) {
+                count++;
+                i += 3;
+            } else if (c > 127) {
+                if ((c & 0xE0) == 0xC0) i += 2;
+                else if ((c & 0xF0) == 0xE0) i += 3;
+                else if ((c & 0xF8) == 0xF0) i += 4;
+                else i += 1;
+            } else {
+                count++;
+                i++;
+            }
+        }
+        return count * (6 * scale) - (1 * scale);
     }
 
     void draw_battery(int x, int y, int percentage, bool color = false, int scale = 2) {
@@ -181,11 +265,11 @@ public:
             draw_string(24 + title_w + 14, 26, dir_badge, false, 2);
         }
 
-        // Digital Clock on top-right
+        // Digital Clock on top-right (Large kitchen wall clock scale 5, 35px high)
         std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
-        int clock_w = get_string_width(clock, 4);
+        int clock_w = get_string_width(clock, 5);
         int clock_x = WIDTH - clock_w - 24;
-        draw_string(clock_x, 18, clock, false, 4);
+        draw_string(clock_x, 15, clock, false, 5);
 
         // Battery Module next to Clock
         int bat_anchor = clock_x - 20;
@@ -197,37 +281,39 @@ public:
             bat_anchor = bat_anchor - 54 - bs_w;
         }
 
-        // Center Header Rain Badge
+        // 2. Weather Telemetry Strip (Large scale 3, 21px high, readable across room)
+        std::string weather_text;
         if (rain_chance >= 0) {
-            std::string rain_hdr = std::to_string(rain_chance) + "% RAIN";
+            char wbuf[64];
             if (temp_c > -50.0f) {
-                char tbuf[16];
-                snprintf(tbuf, sizeof(tbuf), " (%.1fC)", temp_c);
-                rain_hdr += tbuf;
+                snprintf(wbuf, sizeof(wbuf), "CHANCE OF RAIN: %d%%  •  %.1f°C", rain_chance, temp_c);
+            } else {
+                snprintf(wbuf, sizeof(wbuf), "CHANCE OF RAIN: %d%%", rain_chance);
             }
-            int rh_w = get_string_width(rain_hdr, 2);
-            int available = bat_anchor - (24 + title_w + 160);
-            if (available >= rh_w) {
-                int rh_x = (24 + title_w + 160) + (available - rh_w) / 2;
-                draw_string(rh_x, 26, rain_hdr, false, 2);
-            }
+            weather_text = wbuf;
+        } else {
+            weather_text = "WEATHER DATA UNAVAILABLE";
         }
 
-        // 2. Sub-Header Info Strip (Y: 72 to 98)
-        std::string sub_info = "STATION: " + (board.station_code.empty() ? "DART" : board.station_code) +
-                               "  •  FEED: IRISH RAIL REAL-TIME  •  UPDATED: " + clock;
-        draw_string(24, 76, sub_info, true, 2);
-        draw_line(20, 98, WIDTH - 20, 98, true);
+        int wt_w = get_string_width(weather_text, 3);
+        if (rain_chance >= 40) {
+            // Prominent inverted badge when high rain chance expected
+            fill_rect(20, 71, wt_w + 14, 27, true);
+            draw_string(26, 74, weather_text, false, 3);
+        } else {
+            draw_string(24, 74, weather_text, true, 3);
+        }
+        draw_line(20, 102, WIDTH - 20, 102, true);
 
-        // 3. Column Headers Strip (Y: 104 to 134)
-        fill_rect(20, 104, WIDTH - 40, 30, true);
-        draw_string(36, 111, "#", false, 2);
-        draw_string(80, 111, "DESTINATION", false, 2);
-        draw_string(440, 111, "DUE IN", false, 2);
-        draw_string(570, 111, "EXPECTED", false, 2);
-        draw_string(690, 111, "STATUS", false, 2);
+        // 3. Column Headers Strip (Y: 108 to 136)
+        fill_rect(20, 108, WIDTH - 40, 28, true);
+        draw_string(28, 114, "#", false, 2);
+        draw_string(64, 114, "DESTINATION", false, 2);
+        draw_string(370, 114, "DUE IN", false, 2);
+        draw_string(540, 114, "EXPECTED", false, 2);
+        draw_string(660, 114, "STATUS", false, 2);
 
-        // 4. Departures Table (Up to 5 rows, Y: 138 to 430)
+        // 4. Departures Table (Up to 5 rows, Y: 138 to 440)
         if (!board.success && !board.error_message.empty()) {
             draw_string(140, 240, "ERROR CONNECTING TO IRISH RAIL API", true, 3);
             draw_string(180, 280, board.error_message.substr(0, 45), true, 2);
@@ -235,7 +321,7 @@ public:
             draw_string(160, 240, "NO UPCOMING DART DEPARTURES", true, 3);
             draw_string(220, 280, "CHECK TIMETABLE (NEXT 90 MIN)", true, 2);
         } else {
-            int y_starts[5] = {142, 198, 254, 310, 366};
+            int y_starts[5] = {140, 200, 260, 320, 380};
             size_t max_rows = std::min((size_t)5, board.departures.size());
 
             for (size_t i = 0; i < max_rows; ++i) {
@@ -243,34 +329,34 @@ public:
                 int row_y = y_starts[i];
 
                 // Horizontal row divider line
-                draw_line(20, row_y + 52, WIDTH - 20, row_y + 52, true);
+                draw_line(20, row_y + 54, WIDTH - 20, row_y + 54, true);
 
                 // Row index number (1, 2, 3, 4, 5)
                 std::string idx_str = std::to_string(i + 1);
-                draw_string(36, row_y + 14, idx_str, true, 3);
+                draw_string(28, row_y + 16, idx_str, true, 3);
 
-                // Destination name (bold/large)
+                // Destination name (Bold large scale 4, 28px tall!)
                 std::string dest = dep.destination;
                 std::transform(dest.begin(), dest.end(), dest.begin(), ::toupper);
-                if (dest.length() > 18) {
-                    dest = dest.substr(0, 17) + ".";
+                if (dest.length() > 12) {
+                    dest = dest.substr(0, 11) + ".";
                 }
-                draw_string(80, row_y + 14, dest, true, 3);
+                draw_string(64, row_y + 12, dest, true, 4);
 
-                // Due in time (clean typography, no bounding box)
+                // Due in time (Bold large scale 4, 28px tall countdown!)
                 std::string due_text;
                 if (dep.due_in <= 0) {
                     due_text = "DUE";
                 } else {
                     due_text = std::to_string(dep.due_in) + " MIN";
                 }
-                draw_string(440, row_y + 14, due_text, true, 3);
+                draw_string(370, row_y + 12, due_text, true, 4);
 
-                // Expected clock time
+                // Expected clock time (scale 3, 21px tall)
                 std::string exp_time = dep.expected.empty() ? "--:--" : dep.expected;
-                draw_string(570, row_y + 14, exp_time, true, 3);
+                draw_string(540, row_y + 16, exp_time, true, 3);
 
-                // Status column
+                // Status column (scale 3, 21px tall)
                 std::string st = dep.status;
                 if (st.empty() || st == "No Information") {
                     st = "ON TIME";
@@ -280,38 +366,12 @@ public:
 
                 if (st.find("DELAY") != std::string::npos || st.find("LATE") != std::string::npos) {
                     int sw = get_string_width(st, 2);
-                    fill_rect(684, row_y + 12, sw + 12, 24, true);
-                    draw_string(690, row_y + 16, st, false, 2);
+                    fill_rect(656, row_y + 14, sw + 12, 24, true);
+                    draw_string(662, row_y + 18, st, false, 2);
                 } else {
-                    draw_string(690, row_y + 16, st, true, 2);
+                    draw_string(660, row_y + 16, st, true, 3);
                 }
             }
-        }
-
-        // 5. Footer Bar (Y: 436 to 480)
-        draw_line(0, 436, WIDTH - 1, 436, true);
-        draw_string(24, 450, "LIVE IRISH RAIL REALTIME API  •  NEXT AUTO-REFRESH IN 60s", true, 2);
-
-        std::string footer_status;
-        if (rain_chance >= 0) {
-            footer_status = "RAIN CHANCE: " + std::to_string(rain_chance) + "%";
-            if (temp_c > -50.0f) {
-                char tbuf[16];
-                snprintf(tbuf, sizeof(tbuf), "%.0fC  •  ", temp_c);
-                footer_status = std::string(tbuf) + footer_status;
-            }
-        } else {
-            footer_status = "DART COMMUTE";
-        }
-
-        int fs_w = get_string_width(footer_status, 2);
-        int fs_x = WIDTH - fs_w - 24;
-
-        if (rain_chance >= 40) {
-            fill_rect(fs_x - 6, 444, fs_w + 12, 26, true);
-            draw_string(fs_x, 450, footer_status, false, 2);
-        } else {
-            draw_string(fs_x, 450, footer_status, true, 2);
         }
     }
 

@@ -109,3 +109,29 @@ def test_fetch_tomorrow_weather_raises_on_unexpected_shape(monkeypatch):
     with pytest.raises(weather_client.WeatherError):
         weather_client.fetch_tomorrow_weather(53.39, -6.11)
 
+
+def test_fetch_temperature_success(monkeypatch):
+    sample = {"current": {"temperature_2m": 15.4}}
+    monkeypatch.setattr(weather_client.httpx, "get", lambda *a, **k: _FakeResponse(sample))
+
+    temp = weather_client.fetch_temperature(53.39, -6.11)
+    assert temp == 15.4
+
+
+def test_fetch_temperature_raises_on_network_error(monkeypatch):
+    def _raise(*a, **k):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(weather_client.httpx, "get", _raise)
+
+    with pytest.raises(weather_client.WeatherError):
+        weather_client.fetch_temperature(53.39, -6.11)
+
+
+def test_fetch_temperature_raises_on_unexpected_shape(monkeypatch):
+    monkeypatch.setattr(weather_client.httpx, "get", lambda *a, **k: _FakeResponse({"current": {}}))
+
+    with pytest.raises(weather_client.WeatherError):
+        weather_client.fetch_temperature(53.39, -6.11)
+
+

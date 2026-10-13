@@ -27,6 +27,7 @@ def _sample_result():
             )
         ],
         rain_chance=15,
+        temperature=14.2,
     )
 
 
@@ -44,6 +45,7 @@ def test_departures_endpoint(monkeypatch):
     data = response.json()
     assert data["station"] == "Sutton"
     assert data["rain_chance_percent"] == 15
+    assert data["temperature_celsius"] == 14.2
     assert len(data["departures"]) == 1
     assert data["departures"][0]["destination"] == "Howth"
     assert data["departures"][0]["due_in_text"] == "Due"
@@ -71,6 +73,7 @@ def test_preview_endpoint(monkeypatch):
         station_code="SUTTN",
         departures=[],
         rain_chance=50,
+        temperature=15.4,
     )
     monkeypatch.setattr("dart_announce.app.get_departures", lambda settings: mock_result)
 
@@ -79,6 +82,8 @@ def test_preview_endpoint(monkeypatch):
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert "DART &mdash; Sutton" in response.text
+    assert "15.4&deg;C" in response.text
+    assert "50% RAIN" in response.text
     assert "No departures found" in response.text
     assert "SOLARI SPLIT-FLAP TRANSIT DISPLAY" in response.text
     assert "background: #fff" in response.text
@@ -146,6 +151,11 @@ def test_screen_png_endpoint(monkeypatch):
     response_rev = client.get("/screen.png?style=reverse")
     assert response_rev.status_code == 200
     assert response_rev.headers["content-type"] == "image/png"
+
+    response_color = client.get("/screen.png?color=true")
+    assert response_color.status_code == 200
+    assert response_color.headers["content-type"] == "image/png"
+    assert len(response_color.content) > 100
 
 
 def test_screen_bmp_endpoint(monkeypatch):

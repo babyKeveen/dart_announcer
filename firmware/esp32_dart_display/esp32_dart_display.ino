@@ -137,13 +137,18 @@ void epdSendData(uint8_t data) {
 
 void epdWaitBusy() {
     uint32_t start = millis();
-    // BUSY pin: 0 = Idle, 1 = Busy
-    while (digitalRead(PIN_EPD_BUSY) == HIGH) {
-        if (millis() - start > 100) { // Fast 100ms timeout so disconnected panel never stalls web server
-            Serial.println("[Display] Busy timeout (no display attached or busy line high). Skipping wait.");
+    // Waveshare 7.5" V2 (UC8179): poll 0x71, busy pin is 0 (LOW) when BUSY, 1 (HIGH) when IDLE.
+    // With INPUT_PULLUP, if no display is connected, BUSY reads HIGH immediately (non-blocking).
+    while (true) {
+        epdSendCommand(0x71);
+        if (digitalRead(PIN_EPD_BUSY) == HIGH) {
+            break; // Ready / Idle
+        }
+        if (millis() - start > 6000) { // 6 second safety timeout
+            Serial.println("[Display] Busy timeout. Continuing.");
             break;
         }
-        delay(5);
+        delay(10);
     }
 }
 
@@ -159,15 +164,18 @@ void epdReset() {
 void epdInit() {
     static bool s_spi_initialized = false;
     pinMode(PIN_EPD_CS, OUTPUT);
+    digitalWrite(PIN_EPD_CS, HIGH);
     pinMode(PIN_EPD_DC, OUTPUT);
     pinMode(PIN_EPD_RST, OUTPUT);
-    pinMode(PIN_EPD_BUSY, INPUT_PULLDOWN);
+    pinMode(PIN_EPD_BUSY, INPUT_PULLUP);
 
     if (!s_spi_initialized) {
         SPI.begin(36, -1, 35, PIN_EPD_CS); // SCK=36, MISO=none, MOSI=35, CS=10
         s_spi_initialized = true;
     }
-    SPI.beginTransaction(SPISettings(10000000, MSBFIRST, SPI_MODE0));
+    // Safety: ensure any previous transaction was ended before opening a new one
+    SPI.endTransaction();
+    SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
 
     epdReset();
     epdWaitBusy();
@@ -239,6 +247,14 @@ void epdSleep() {
     epdWaitBusy();
     epdSendCommand(0x07); // Deep sleep
     epdSendData(0xA5);
+    digitalWrite(PIN_EPD_CS, HIGH);
+    SPI.endTransaction(); // Release SPI bus lock
+}
+
+void updatePhysicalDisplay(const uint8_t* buffer) {
+    epdInit();
+    epdDisplay(buffer);
+    epdSleep();
 }
 
 // ======================== BATTERY TELEMETRY ========================
@@ -390,10 +406,7 @@ void showSetupScreenOnEPD() {
     g_canvas.print_ascii_screen(Serial);
 
     g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
-
-    epdInit();
-    epdDisplay(g_epd_buffer);
-    epdSleep();
+    updatePhysicalDisplay(g_epd_buffer);
 }
 
 String buildPortalHtml() {
@@ -585,6 +598,7 @@ void handleSaveConfig() {
         // Station/display settings updated: immediately re-fetch and redirect to preview!
         fetchAndRender();
         webServer.sendHeader("Location", "/");
+        webServer.sendHeader("Connection", "close");
         webServer.send(302, "text/plain", "");
     }
 }
@@ -780,16 +794,13 @@ void fetchAndRender() {
 
     redrawCanvas();
 
-    // 2. Print ASCII visualizer directly to Serial Monitor
-    Serial.println("\n[E-PAPER SCREEN PREVIEW]");
-    g_canvas.print_ascii_screen(Serial);
+    // 2. Telemetry log (avoid 6KB ASCII dump over USB-CDC which blocks when no terminal is connected)
+    Serial.printf("[Screen] 800x480 BMP buffer ready (%d bytes).\n", (int)g_bmp_size);
 
     // 3. Update physical Waveshare 7.5" HAT Display (safe timeout if disconnected)
     g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
     Serial.println("Updating Waveshare 7.5\" HAT e-paper (safe timeout if disconnected)...");
-    epdInit();
-    epdDisplay(g_epd_buffer);
-    epdSleep();
+    updatePhysicalDisplay(g_epd_buffer);
     g_last_refresh_ms = millis(); // Ensure at least 60s for web server before next fetch
 }
 
@@ -807,7 +818,14 @@ void setupPreviewServer() {
             webServer.sendHeader("Pragma", "no-cache");
             webServer.sendHeader("Expires", "0");
             webServer.sendHeader("Connection", "close");
-            webServer.send_P(200, "image/bmp", (const char*)g_bmp_buffer, g_bmp_size);
+            webServer.setContentLength(g_bmp_size);
+            webServer.send(200, "image/bmp", "");
+
+            const size_t CHUNK = 2048;
+            for (size_t offset = 0; offset < g_bmp_size; offset += CHUNK) {
+                size_t len = std::min(CHUNK, g_bmp_size - offset);
+                webServer.sendContent((const char*)(g_bmp_buffer + offset), len);
+            }
         } else {
             webServer.send(404, "text/plain", "BMP not ready");
         }
@@ -824,6 +842,8 @@ void setupPreviewServer() {
         prefs.putBool("reverse", g_reverse_mode);
         prefs.end();
         redrawCanvas(); // Instant: redraws buffer in RAM in under 1ms!
+        g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
+        updatePhysicalDisplay(g_epd_buffer);
         webServer.sendHeader("Location", "/");
         webServer.sendHeader("Connection", "close");
         webServer.send(302, "text/plain", "");

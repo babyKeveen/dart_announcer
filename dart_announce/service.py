@@ -13,6 +13,7 @@ class DeparturesResult:
     station_code: str
     departures: list[Departure]
     rain_chance: int | None = None
+    temperature: float | None = None
     tomorrow_weather: weather_client.DailyForecast | None = None
 
 
@@ -35,6 +36,7 @@ def get_departures(settings: Settings) -> DeparturesResult:
         station_code=station_code,
         departures=departures,
         rain_chance=_get_rain_chance(station),
+        temperature=_get_temperature(station),
         tomorrow_weather=_get_tomorrow_weather(station),
     )
 
@@ -46,6 +48,16 @@ def _get_rain_chance(station: dict) -> int | None:
         longitude = float(station["StationLongitude"])
         return weather_client.fetch_rain_chance(latitude, longitude)
     except (weather_client.WeatherError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _get_temperature(station: dict) -> float | None:
+    """Best-effort temperature forecast; failures degrade to None."""
+    try:
+        latitude = float(station["StationLatitude"])
+        longitude = float(station["StationLongitude"])
+        return weather_client.fetch_temperature(latitude, longitude)
+    except (weather_client.WeatherError, KeyError, TypeError, ValueError, Exception):
         return None
 
 

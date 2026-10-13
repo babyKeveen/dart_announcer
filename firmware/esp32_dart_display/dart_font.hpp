@@ -10,7 +10,7 @@ extern const uint8_t FONT_5X7[];
 // Font lookup helper
 inline const uint8_t* get_font_char(char c) {
     if (c < 32 || c > 126) {
-        c = '?';
+        c = ' ';
     }
     return &FONT_5X7[(c - 32) * 5];
 }
