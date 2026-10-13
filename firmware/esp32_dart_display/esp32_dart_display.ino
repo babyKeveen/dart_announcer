@@ -139,11 +139,11 @@ void epdWaitBusy() {
     uint32_t start = millis();
     // BUSY pin: 0 = Idle, 1 = Busy
     while (digitalRead(PIN_EPD_BUSY) == HIGH) {
-        if (millis() - start > 15000) { // 15-second safety timeout so disconnected panel never stalls web server
+        if (millis() - start > 100) { // Fast 100ms timeout so disconnected panel never stalls web server
             Serial.println("[Display] Busy timeout (no display attached or busy line high). Skipping wait.");
             break;
         }
-        delay(10);
+        delay(5);
     }
 }
 
@@ -790,6 +790,7 @@ void fetchAndRender() {
     epdInit();
     epdDisplay(g_epd_buffer);
     epdSleep();
+    g_last_refresh_ms = millis(); // Ensure at least 60s for web server before next fetch
 }
 
 void setupPreviewServer() {
