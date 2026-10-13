@@ -40,6 +40,7 @@
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <ESPmDNS.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <base64.h>
@@ -424,22 +425,39 @@ String buildPortalHtml() {
 
     struct StationItem { const char* code; const char* name; };
     const StationItem stList[] = {
-        {"SUTTN", "Sutton"},
+        {"MHIDE", "Malahide"},
+        {"PMNCK", "Portmarnock"},
+        {"GRGRD", "Clongriffin"},
         {"HOWTH", "Howth"},
+        {"SUTTN", "Sutton"},
         {"BYSDE", "Bayside"},
+        {"HWTHJ", "Howth Junction & Donaghmede"},
         {"KBRCK", "Kilbarrack"},
         {"RAHNY", "Raheny"},
-        {"HMDWN", "Harmonstown"},
+        {"HTOWN", "Harmonstown"},
         {"KLSTR", "Killester"},
-        {"CNNLY", "Dublin Connolly"},
+        {"CTARF", "Clontarf Road"},
+        {"CNLLY", "Dublin Connolly"},
         {"TARA",  "Tara Street"},
         {"PERSE", "Dublin Pearse"},
         {"GCDK",  "Grand Canal Dock"},
         {"LDWNE", "Lansdowne Road"},
-        {"DLGHY", "Dun Laoghaire"},
+        {"SMONT", "Sandymount"},
+        {"SIDNY", "Sydney Parade"},
+        {"BTSTN", "Booterstown"},
+        {"BROCK", "Blackrock"},
+        {"SEAPT", "Seapoint"},
+        {"SHILL", "Salthill & Monkstown"},
+        {"DLERY", "Dun Laoghaire"},
+        {"SCOVE", "Sandycove & Glasthule"},
+        {"GLGRY", "Glenageary"},
+        {"DLKEY", "Dalkey"},
+        {"KILNY", "Killiney"},
+        {"SKILL", "Shankill"},
+        {"WBROK", "Woodbrook"},
         {"BRAY",  "Bray"},
         {"GSTNS", "Greystones"},
-        {"MLHT",  "Malahide"}
+        {"KCOOL", "Kilcoole"}
     };
 
     String stationHtml = "";
@@ -595,11 +613,38 @@ void handleSaveConfig() {
         Serial.println("[SETUP] Restarting ESP32 into new Wi-Fi network...");
         ESP.restart();
     } else {
-        // Station/display settings updated: immediately re-fetch and redirect to preview!
+        // Station/display settings updated: respond immediately to prevent browser timeout!
+        String redirectHtml = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="2; url=/">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings Saved</title>
+  <style>
+    body { background: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 40px 16px; margin: 0; }
+    .box { background: #1e293b; max-width: 440px; margin: 0 auto; border-radius: 12px; padding: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    h2 { color: #22c55e; margin-top: 0; font-size: 22px; }
+    p { color: #cbd5e1; font-size: 15px; }
+    .spinner { display: inline-block; width: 34px; height: 34px; border: 4px solid #334155; border-top-color: #22c55e; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 16px 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>✓ Settings Saved!</h2>
+    <p>Updating departures board for new station...</p>
+    <div class="spinner"></div>
+    <p style="font-size: 13px; color: #94a3b8;">Redirecting to live preview in 2 seconds...</p>
+  </div>
+</body>
+</html>
+)rawliteral";
+        webServer.send(200, "text/html", redirectHtml);
+        webServer.client().stop();
+        delay(50);
         fetchAndRender();
-        webServer.sendHeader("Location", "/");
-        webServer.sendHeader("Connection", "close");
-        webServer.send(302, "text/plain", "");
     }
 }
 
@@ -729,7 +774,7 @@ String buildPreviewHtml() {
   </div>
 
   <div class="footer">
-    Auto-refreshes every 60s &bull; ESP32-S3 Native Output &bull; Waveshare 7.5" HAT (800x480)
+    Auto-refreshes every 60s &bull; http://dart-display.local/ &bull; Waveshare 7.5" HAT (800x480)
   </div>
 </div>
 </body>
@@ -911,6 +956,7 @@ void setup() {
     setStatusLed(0, 0, 32); // Blue: connecting to Wi-Fi
     Serial.printf("Connecting to Wi-Fi: %s", g_wifi_ssid.c_str());
     WiFi.mode(WIFI_STA);
+    WiFi.setHostname("dart-display");
     WiFi.begin(g_wifi_ssid.c_str(), g_wifi_password.c_str());
     uint32_t wifiStart = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) {
@@ -928,6 +974,12 @@ void setup() {
     setStatusLed(0, 32, 0); // Green: connected and running!
     Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
 
+    // Start mDNS responder so http://dart-display.local/ works seamlessly
+    if (MDNS.begin("dart-display")) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("[mDNS] Responder active: http://dart-display.local/");
+    }
+
     // 5. Initial Fetch and Render
     fetchAndRender();
     g_last_refresh_ms = millis();
@@ -936,7 +988,7 @@ void setup() {
     if (g_test_mode) {
         Serial.println("\n=================================================================");
         Serial.println("🎉 STANDALONE PREVIEW SERVER ACTIVE ON ESP32!");
-        Serial.printf("👉 Open http://%s/ in your browser to view the live 250x122 display!\n", WiFi.localIP().toString().c_str());
+        Serial.printf("👉 Open http://dart-display.local/ (or http://%s/) in your browser!\n", WiFi.localIP().toString().c_str());
         Serial.println("Auto-refreshes every 60 seconds over Wi-Fi (no deep sleep).");
         Serial.println("=================================================================\n");
         setupPreviewServer();
@@ -954,13 +1006,11 @@ void setup() {
 }
 
 void loop() {
-    if (g_test_mode) {
-        webServer.handleClient();
-        if (millis() - g_last_refresh_ms > 60000) {
-            g_last_refresh_ms = millis();
-            Serial.println("\n[Auto-Refresh] Fetching live DART departures...");
-            fetchAndRender();
-        }
-        delay(10);
+    webServer.handleClient();
+    if (millis() - g_last_refresh_ms > 60000) {
+        g_last_refresh_ms = millis();
+        Serial.println("\n[Auto-Refresh] Fetching live DART departures...");
+        fetchAndRender();
     }
+    delay(10);
 }
