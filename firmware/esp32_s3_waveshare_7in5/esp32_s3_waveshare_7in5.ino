@@ -44,12 +44,13 @@ const char* SERVER_BASE_URL = "http://raspi2modelb2014.local:8000/screen.bin";
 // Update interval (seconds). Recommended 60 to 120 seconds on battery.
 const uint32_t SLEEP_SECONDS = 90;
 
-// --- Pin Definitions for Adafruit ESP32-S3 Feather ---
-const int PIN_EPD_CS   = 10;
-const int PIN_EPD_DC   = 9;
-const int PIN_EPD_RST  = 6;
-const int PIN_EPD_BUSY = 5;
-const int PIN_VBAT     = 1;  // GPIO 1 (A13) on Adafruit ESP32-S3 Feather
+// --- Pin Definitions for Adafruit ESP32-S3 Feather (Waveshare HAT Rev 2.3) ---
+const int PIN_EPD_CS   = 9;   // Feather D9  (Orange)
+const int PIN_EPD_DC   = 10;  // Feather D10 (Green)
+const int PIN_EPD_RST  = 11;  // Feather D11 (White)
+const int PIN_EPD_BUSY = 12;  // Feather D12 (Purple)
+const int PIN_EPD_PWR  = 13;  // Feather D13 (Brown - Power Switch Enable)
+const int PIN_VBAT     = 1;   // GPIO 1 (A13) on Adafruit ESP32-S3 Feather
 
 // Waveshare 7.5" V2 resolution
 const int EPD_WIDTH   = 800;

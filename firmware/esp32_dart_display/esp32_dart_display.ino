@@ -54,13 +54,14 @@
 #include "dart_parser.hpp"
 #include "dart_canvas.hpp"
 
-// ======================== HARDWARE PINS ========================
-const int PIN_EPD_CS   = 10;
-const int PIN_EPD_DC   = 9;
-const int PIN_EPD_RST  = 6;
-const int PIN_EPD_BUSY = 5;
-const int PIN_VBAT     = 1;  // GPIO 1 (A13) on Adafruit ESP32-S3 Feather
-const int PIN_BOOT_BTN = 0;  // BOOT button on Adafruit ESP32-S3 Feather
+// ======================== HARDWARE PINS (Waveshare HAT Rev 2.3) ========================
+const int PIN_EPD_CS   = 9;   // Feather D9  (Orange) - Chip Select
+const int PIN_EPD_DC   = 10;  // Feather D10 (Green)  - Data/Command
+const int PIN_EPD_RST  = 11;  // Feather D11 (White)  - Hardware Reset
+const int PIN_EPD_BUSY = 12;  // Feather D12 (Purple) - Status Output
+const int PIN_EPD_PWR  = 13;  // Feather D13 (Brown)  - Power Switch Enable (HAT Rev 2.3)
+const int PIN_VBAT     = 1;   // GPIO 1 (A13) on Adafruit ESP32-S3 Feather
+const int PIN_BOOT_BTN = 0;   // BOOT button on Adafruit ESP32-S3 Feather
 
 #ifndef PIN_I2C_POWER
 #define PIN_I2C_POWER 7
@@ -305,6 +306,12 @@ void epdReset() {
 
 void epdInit() {
     static bool s_spi_initialized = false;
+
+    // Enable display power switch on Waveshare HAT Rev 2.3
+    pinMode(PIN_EPD_PWR, OUTPUT);
+    digitalWrite(PIN_EPD_PWR, HIGH);
+    delay(20);
+
     pinMode(PIN_EPD_CS, OUTPUT);
     digitalWrite(PIN_EPD_CS, HIGH);
     pinMode(PIN_EPD_DC, OUTPUT);
@@ -312,7 +319,7 @@ void epdInit() {
     pinMode(PIN_EPD_BUSY, INPUT_PULLUP);
 
     if (!s_spi_initialized) {
-        SPI.begin(36, -1, 35, PIN_EPD_CS); // SCK=36, MISO=none, MOSI=35, CS=10
+        SPI.begin(36, -1, 35, PIN_EPD_CS); // SCK=36, MISO=none, MOSI=35, CS=9
         s_spi_initialized = true;
     }
     // Safety: ensure any previous transaction was ended before opening a new one
@@ -1057,6 +1064,11 @@ void setup() {
     digitalWrite(NEOPIXEL_POWER, NEOPIXEL_POWER_ON);
 #endif
     setStatusLed(0, 16, 32); // Cyan: booting up
+
+    // Power on Waveshare HAT Rev 2.3 via D13
+    pinMode(PIN_EPD_PWR, OUTPUT);
+    digitalWrite(PIN_EPD_PWR, HIGH);
+    delay(20);
 
     Serial.println("\n=======================================================");
     Serial.println("  🚆 DART Announce - Adafruit Feather ESP32-S3 Display");
