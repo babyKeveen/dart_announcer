@@ -275,21 +275,23 @@ void epdSendData(uint8_t data) {
     digitalWrite(PIN_EPD_CS, HIGH);
 }
 
-void epdWaitBusy() {
+void epdWaitBusy(const char* label = "Operation") {
     uint32_t start = millis();
-    // Waveshare 7.5" V2 (UC8179): poll 0x71, busy pin is 0 (LOW) when BUSY, 1 (HIGH) when IDLE.
-    // With INPUT_PULLUP, if no display is connected, BUSY reads HIGH immediately (non-blocking).
-    while (true) {
-        epdSendCommand(0x71);
-        if (digitalRead(PIN_EPD_BUSY) == HIGH) {
-            break; // Ready / Idle
-        }
-        if (millis() - start > 6000) { // 6 second safety timeout
-            Serial.println("[Display] Busy timeout. Continuing.");
-            break;
+    int initialPin = digitalRead(PIN_EPD_BUSY);
+    Serial.printf("[EPD] %s: waiting for BUSY release (BUSY pin %d is %d)...\n",
+                  label, PIN_EPD_BUSY, initialPin);
+
+    // Waveshare 7.5" V2 (UC8179): BUSY pin is 0 (LOW) when BUSY, 1 (HIGH) when IDLE/READY.
+    // Do NOT send SPI command 0x71 here, as sending SPI traffic during refresh interrupts UC8179.
+    while (digitalRead(PIN_EPD_BUSY) == LOW) {
+        if (millis() - start > 15000) { // 15-second safety timeout (full refresh takes ~3-5s)
+            Serial.printf("[EPD] %s: BUSY timeout after %u ms!\n", label, millis() - start);
+            return;
         }
         delay(10);
     }
+    Serial.printf("[EPD] %s: ready in %u ms.\n", label, millis() - start);
+    delay(10);
 }
 
 void epdReset() {
@@ -317,20 +319,29 @@ void epdInit() {
     SPI.endTransaction();
     SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
 
+    Serial.printf("[EPD] Initializing Waveshare 7.5\" V2... (BUSY pin %d = %d)\n",
+                  PIN_EPD_BUSY, digitalRead(PIN_EPD_BUSY));
+
     epdReset();
-    epdWaitBusy();
 
     // Power Setting
     epdSendCommand(0x01);
     epdSendData(0x07);
-    epdSendData(0x07);
-    epdSendData(0x3f);
-    epdSendData(0x3f);
+    epdSendData(0x07); // VGH=20V, VGL=-20V
+    epdSendData(0x3f); // VDH=15V
+    epdSendData(0x3f); // VDL=-15V
+
+    // Enhanced display drive (Booster Soft Start - required for UC8179 high-voltage rails)
+    epdSendCommand(0x06);
+    epdSendData(0x17);
+    epdSendData(0x17);
+    epdSendData(0x28);
+    epdSendData(0x17);
 
     // Power ON
     epdSendCommand(0x04);
-    delay(100);
-    epdWaitBusy();
+    delay(150); // Required delay for controller to start charge pump and assert BUSY LOW
+    epdWaitBusy("Power ON");
 
     // Panel Setting (800x480, B/W mode)
     epdSendCommand(0x00);
@@ -347,7 +358,7 @@ void epdInit() {
     epdSendCommand(0x15);
     epdSendData(0x00);
 
-    // VCOM and data interval
+    // VCOM and data interval setting
     epdSendCommand(0x50);
     epdSendData(0x10);
     epdSendData(0x07);
@@ -358,37 +369,54 @@ void epdInit() {
 }
 
 void epdDisplay(const uint8_t* buffer) {
-    // 0x10 = Old data (transmit white)
+    const size_t total = dart::Canvas::EPD_BUFFER_SIZE; // exactly 48,000 bytes (800x480/8)
+    const size_t chunkSize = 2048;
+
+    Serial.printf("[EPD] Transmitting %u bytes to DTM1 (0x10)...\n", (unsigned int)total);
+    // 0x10 = Black/White transmission (DTM1)
     epdSendCommand(0x10);
     digitalWrite(PIN_EPD_DC, HIGH);
     digitalWrite(PIN_EPD_CS, LOW);
-    uint8_t ff_block[256];
-    memset(ff_block, 0xFF, sizeof(ff_block));
-    for (int i = 0; i < dart::Canvas::EPD_BUFFER_SIZE / 256; i++) {
-        SPI.writeBytes(ff_block, sizeof(ff_block));
+    for (size_t offset = 0; offset < total; offset += chunkSize) {
+        size_t len = std::min(chunkSize, total - offset);
+        SPI.writeBytes(buffer + offset, len);
     }
     digitalWrite(PIN_EPD_CS, HIGH);
 
-    // 0x13 = New data (black/white bitmap)
+    Serial.printf("[EPD] Transmitting %u bytes inverted to DTM2 (0x13)...\n", (unsigned int)total);
+    // 0x13 = Inverted data transmission (DTM2)
     epdSendCommand(0x13);
     digitalWrite(PIN_EPD_DC, HIGH);
     digitalWrite(PIN_EPD_CS, LOW);
-    SPI.writeBytes(buffer, dart::Canvas::EPD_BUFFER_SIZE);
+    uint8_t inv_chunk[chunkSize];
+    for (size_t offset = 0; offset < total; offset += chunkSize) {
+        size_t len = std::min(chunkSize, total - offset);
+        for (size_t b = 0; b < len; ++b) {
+            inv_chunk[b] = ~buffer[offset + b];
+        }
+        SPI.writeBytes(inv_chunk, len);
+    }
     digitalWrite(PIN_EPD_CS, HIGH);
 
     // Display Refresh
+    Serial.println("[EPD] Refreshing display panel (0x12)...");
     epdSendCommand(0x12);
-    delay(100);
-    epdWaitBusy();
+    delay(200); // Controller needs ~100-200ms to engage refresh engine and assert BUSY LOW
+    epdWaitBusy("Display Refresh");
 }
 
 void epdSleep() {
+    Serial.println("[EPD] Putting display controller to sleep...");
+    epdSendCommand(0x50);
+    epdSendData(0xF7);
     epdSendCommand(0x02); // Power OFF
-    epdWaitBusy();
+    delay(100);
+    epdWaitBusy("Power OFF");
     epdSendCommand(0x07); // Deep sleep
     epdSendData(0xA5);
     digitalWrite(PIN_EPD_CS, HIGH);
     SPI.endTransaction(); // Release SPI bus lock
+    Serial.println("[EPD] Display in deep sleep.");
 }
 
 void updatePhysicalDisplay(const uint8_t* buffer) {
