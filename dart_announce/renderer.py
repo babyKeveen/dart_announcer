@@ -494,8 +494,8 @@ def _render_commute(
     dart_title = f"DART  •  {st_name}  •  {dir_str}"
     draw.text((24, 7), dart_title, fill=1, font=f_title)
 
-    # Next 2 Trains (Row 1 at Y: 46, Row 2 at Y: 136)
-    y_trains = [46, 136]
+    # Next 2 Trains (Row 1 at Y: 59, Row 2 at Y: 123)
+    y_trains = [59, 123]
     if not result.departures:
         draw.text((180, 115), "CONNECTING TO IRISH RAIL...", fill=0, font=f_dest_lg)
     else:
@@ -535,8 +535,8 @@ def _render_commute(
     bus_title = f"DUBLIN BUS  •  ROUTE {bus_rt}  •  {bus_st}"
     draw.text((24, 230), bus_title, fill=1, font=f_title)
 
-    # Next 2 Buses (Row 1 at Y: 269, Row 2 at Y: 359)
-    y_buses = [269, 359]
+    # Next 2 Buses (Row 1 at Y: 282, Row 2 at Y: 346)
+    y_buses = [282, 346]
     if not result.bus_departures:
         draw.text((180, 338), "CONNECTING TO DUBLIN BUS...", fill=0, font=f_dest_lg)
     else:

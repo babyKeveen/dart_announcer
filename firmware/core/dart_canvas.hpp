@@ -268,7 +268,7 @@ public:
             draw_string(180, 115, "NO UPCOMING DART DEPARTURES", true, 4);
         } else {
             size_t max_trains = std::min((size_t)2, board.departures.size());
-            int y_trains[2] = {46, 136};
+            int y_trains[2] = {59, 123};
             for (size_t i = 0; i < max_trains; ++i) {
                 const auto& dep = board.departures[i];
                 int ry = y_trains[i];
@@ -325,7 +325,7 @@ public:
             draw_string(180, 338, "CONNECTING TO DUBLIN BUS...", true, 4);
         } else {
             size_t max_buses = std::min((size_t)2, board.bus_departures.size());
-            int y_buses[2] = {269, 359};
+            int y_buses[2] = {282, 346};
             for (size_t i = 0; i < max_buses; ++i) {
                 const auto& bus = board.bus_departures[i];
                 int ry = y_buses[i];
