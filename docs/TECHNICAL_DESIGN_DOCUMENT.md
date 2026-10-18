@@ -193,6 +193,18 @@ The graphics subsystem is implemented in clean C++ (`dart_canvas.hpp`) without d
      * **Weather**: `WEATHER: <TEMP>°C  •  RAIN: <RAIN>%` with dynamic `[UMBRELLA]` badge if rain $\ge 40\%$ (Center, X: 295).
      * **Battery**: `BATTERY: <PERCENT>%` with visual multi-segment fuel gauge icon (Right, X: 565).
 
+#### Horizontal Column Coordinate Grid (Zero-Overlap Guarantee across 800px Width):
+To eliminate text collisions between destination, expected time (`EXP: HH:MM`), and status (`ON TIME` / `LIVE` / `SCHED` / `DELAY`), departures use a right-aligned column grid:
+
+| Column | X Range | Width | Scale / Styling | Alignment & Behavior |
+| :--- | :--- | :--- | :--- | :--- |
+| **Left Margin** | `X: 0..23` | 24 px | — | Symmetrical left border |
+| **Countdown Badge** | `X: 24..139` | 116 px | Scale 3 (`56px` tall) | Inverted solid black pill (`DUE` / `<min> MIN`) |
+| **Destination** | `X: 156..441` | $\le 285$ px | Scale 5 ($\le 9$ ch), 4 ($\le 12$ ch), 3 ($> 12$ ch) | Auto-scaling based on text length (max 16 chars) |
+| **Expected Time** | `X: 455..632` | 177 px | Scale 3 (`EXP: HH:MM`) | Fixed start at $X=455$, $\ge 21$px gap to status |
+| **Status** | `X: 653..776` | $\le 123$ px | Scale 3 (`ON TIME`/`LIVE`/`SCHED`) or Scale 2 pill (`DELAY`) | **Right-aligned** against $X = 776$ |
+| **Right Margin** | `X: 776..799` | 24 px | — | Symmetrical 24px right border |
+
 ---
 
 ### 4.2 Dynamic Station Discovery & Geocoding

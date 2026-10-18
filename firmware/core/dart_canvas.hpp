@@ -288,28 +288,37 @@ public:
                 int due_x = 24 + (116 - due_w) / 2;
                 draw_string(due_x, ry + 27, due_txt, false, 3);
 
-                // Destination (scale 5 for <= 12 chars, scale 4 for longer)
+                // Destination (scale 5 for <= 9 chars, scale 4 for <= 12, scale 3 for longer)
                 std::string dest = dep.destination;
                 std::transform(dest.begin(), dest.end(), dest.begin(), ::toupper);
                 if (dest.length() > 16) dest = dest.substr(0, 15) + ".";
-                int dest_scale = (dest.length() <= 12) ? 5 : 4;
-                int dest_y = (dest_scale == 5) ? (ry + 20) : (ry + 24);
-                draw_string(160, dest_y, dest, true, dest_scale);
+                int dest_scale = (dest.length() <= 9) ? 5 : ((dest.length() <= 12) ? 4 : 3);
+                int dest_y = (dest_scale == 5) ? (ry + 20) : ((dest_scale == 4) ? (ry + 24) : (ry + 27));
+                draw_string(156, dest_y, dest, true, dest_scale);
 
                 // Expected time
                 std::string exp_txt = "EXP: " + (dep.expected.empty() ? "--:--" : dep.expected);
-                draw_string(520, ry + 27, exp_txt, true, 3);
+                draw_string(455, ry + 27, exp_txt, true, 3);
 
-                // Status
+                // Status (right-aligned to X = 776)
                 std::string st = dep.status;
-                if (st.empty() || st == "No Information") st = "ON TIME";
+                if (st.empty() || st == "No Information" || st == "En Route") st = "ON TIME";
                 std::transform(st.begin(), st.end(), st.begin(), ::toupper);
+                if (st == "EN ROUTE" || st == "NO INFORMATION") st = "ON TIME";
                 if (st.find("DELAY") != std::string::npos || st.find("LATE") != std::string::npos) {
                     int sw = get_string_width(st, 2);
-                    fill_rect(670, ry + 23, sw + 12, 26, true);
-                    draw_string(676, ry + 28, st, false, 2);
+                    int bw = sw + 16;
+                    int bx = 776 - bw;
+                    fill_rect(bx, ry + 23, bw, 26, true);
+                    draw_string(bx + 8, ry + 28, st, false, 2);
                 } else {
-                    draw_string(675, ry + 27, st, true, 3);
+                    int sw = get_string_width(st, 3);
+                    if (sw > 125) {
+                        int sw2 = get_string_width(st, 2);
+                        draw_string(776 - sw2, ry + 28, st, true, 2);
+                    } else {
+                        draw_string(776 - sw, ry + 27, st, true, 3);
+                    }
                 }
             }
         }
@@ -350,22 +359,38 @@ public:
                 int due_x = 24 + (116 - due_w) / 2;
                 draw_string(due_x, ry + 27, due_txt, false, 3);
 
-                // Destination
+                // Destination (scale 5 for <= 9 chars, scale 4 for <= 12, scale 3 for longer)
                 std::string dest = bus.destination;
                 std::transform(dest.begin(), dest.end(), dest.begin(), ::toupper);
                 if (dest.length() > 16) dest = dest.substr(0, 15) + ".";
-                int dest_scale = (dest.length() <= 12) ? 5 : 4;
-                int dest_y = (dest_scale == 5) ? (ry + 20) : (ry + 24);
-                draw_string(160, dest_y, dest, true, dest_scale);
+                int dest_scale = (dest.length() <= 9) ? 5 : ((dest.length() <= 12) ? 4 : 3);
+                int dest_y = (dest_scale == 5) ? (ry + 20) : ((dest_scale == 4) ? (ry + 24) : (ry + 27));
+                draw_string(156, dest_y, dest, true, dest_scale);
 
                 // Expected / Scheduled time
                 std::string exp_txt = "EXP: " + (bus.expected.empty() ? "--:--" : bus.expected);
-                draw_string(520, ry + 27, exp_txt, true, 3);
+                draw_string(455, ry + 27, exp_txt, true, 3);
 
-                // Status (Live / Scheduled)
+                // Status (Live / Sched - right-aligned to X = 776)
                 std::string st = bus.status;
+                if (st.empty()) st = "SCHED";
                 std::transform(st.begin(), st.end(), st.begin(), ::toupper);
-                draw_string(675, ry + 27, st, true, 3);
+                if (st == "SCHEDULED") st = "SCHED";
+                if (st.find("DELAY") != std::string::npos || st.find("LATE") != std::string::npos) {
+                    int sw = get_string_width(st, 2);
+                    int bw = sw + 16;
+                    int bx = 776 - bw;
+                    fill_rect(bx, ry + 23, bw, 26, true);
+                    draw_string(bx + 8, ry + 28, st, false, 2);
+                } else {
+                    int sw = get_string_width(st, 3);
+                    if (sw > 125) {
+                        int sw2 = get_string_width(st, 2);
+                        draw_string(776 - sw2, ry + 28, st, true, 2);
+                    } else {
+                        draw_string(776 - sw, ry + 27, st, true, 3);
+                    }
+                }
             }
         }
 

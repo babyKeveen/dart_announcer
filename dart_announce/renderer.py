@@ -482,6 +482,7 @@ def _render_commute(
     f_badge = _load_font("BebasNeue.ttf", 28)
     f_dest_lg = _load_font("BebasNeue.ttf", 40)
     f_dest_md = _load_font("BebasNeue.ttf", 34)
+    f_dest_sm = _load_font("BebasNeue.ttf", 28)
     f_sub = _load_font("Oswald.ttf", 22)
     f_status = _load_font("Oswald.ttf", 20)
     f_footer = _load_font("Oswald.ttf", 16)
@@ -520,16 +521,19 @@ def _render_commute(
             dest = d.destination.upper()
             if len(dest) > 16:
                 dest = dest[:15] + "."
-            f_d = f_dest_md if len(dest) > 12 else f_dest_lg
-            draw.text((160, ry + 16), dest, fill=0, font=f_d)
+            f_d = f_dest_sm if len(dest) > 12 else (f_dest_md if len(dest) > 9 else f_dest_lg)
+            y_off = 16 if len(dest) <= 9 else (20 if len(dest) <= 12 else 24)
+            draw.text((156, ry + y_off), dest, fill=0, font=f_d)
 
             # Expected
             exp_txt = f"EXP: {d.expected if d.expected else '--:--'}"
-            draw.text((520, ry + 26), exp_txt, fill=0, font=f_sub)
+            draw.text((455, ry + 26), exp_txt, fill=0, font=f_sub)
 
-            # Status
-            st = d.status.upper() if d.status and d.status != "No Information" else "ON TIME"
-            draw.text((675, ry + 26), st, fill=0, font=f_status)
+            # Status (right-aligned to X = 776)
+            st = d.status.upper() if d.status and d.status.upper() not in ("NO INFORMATION", "EN ROUTE") else "ON TIME"
+            st_box = f_status.getbbox(st)
+            st_w = st_box[2] - st_box[0]
+            draw.text((776 - st_w, ry + 26), st, fill=0, font=f_status)
 
     # ================= SECTION DIVIDER =================
     draw.line([(0, 221), (WIDTH, 221)], fill=0, width=2)
@@ -568,16 +572,21 @@ def _render_commute(
             b_dest = b.destination.upper()
             if len(b_dest) > 16:
                 b_dest = b_dest[:15] + "."
-            f_d = f_dest_md if len(b_dest) > 12 else f_dest_lg
-            draw.text((160, ry + 16), b_dest, fill=0, font=f_d)
+            f_d = f_dest_sm if len(b_dest) > 12 else (f_dest_md if len(b_dest) > 9 else f_dest_lg)
+            y_off = 16 if len(b_dest) <= 9 else (20 if len(b_dest) <= 12 else 24)
+            draw.text((156, ry + y_off), b_dest, fill=0, font=f_d)
 
             # Expected
             exp_txt = f"EXP: {b.expected if b.expected else '--:--'}"
-            draw.text((520, ry + 26), exp_txt, fill=0, font=f_sub)
+            draw.text((455, ry + 26), exp_txt, fill=0, font=f_sub)
 
-            # Status
-            st = b.status.upper()
-            draw.text((675, ry + 26), st, fill=0, font=f_status)
+            # Status (right-aligned to X = 776)
+            st = b.status.upper() if b.status else "SCHED"
+            if st == "SCHEDULED":
+                st = "SCHED"
+            st_box = f_status.getbbox(st)
+            st_w = st_box[2] - st_box[0]
+            draw.text((776 - st_w, ry + 26), st, fill=0, font=f_status)
 
     # ================= FOOTER: SINGLE LINE FOR TIME | WEATHER | BATTERY =================
     # Divider Line at Y: 444
