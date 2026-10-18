@@ -501,8 +501,6 @@ def _render_commute(
     else:
         for i, d in enumerate(result.departures[:2]):
             ry = y_trains[i]
-            if i == 0:
-                draw.line([(24, 133), (WIDTH - 24, 133)], fill=0, width=1)
 
             # Due in badge
             draw.rectangle([(24, ry + 10), (140, ry + 66)], fill=0)
@@ -544,8 +542,6 @@ def _render_commute(
     else:
         for i, b in enumerate(result.bus_departures[:2]):
             ry = y_buses[i]
-            if i == 0:
-                draw.line([(24, 356), (WIDTH - 24, 356)], fill=0, width=1)
 
             # Due in badge
             draw.rectangle([(24, ry + 10), (140, ry + 66)], fill=0)

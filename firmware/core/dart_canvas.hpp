@@ -273,8 +273,6 @@ public:
                 const auto& dep = board.departures[i];
                 int ry = y_trains[i];
 
-                if (i == 0) draw_line(24, 133, WIDTH - 24, 133, true);
-
                 // Due in badge (solid black rectangle with white text)
                 fill_rect(24, ry + 10, 116, 56, true);
                 std::string due_txt = (dep.due_in <= 0) ? "DUE" : (std::to_string(dep.due_in) + " MIN");
@@ -331,8 +329,6 @@ public:
             for (size_t i = 0; i < max_buses; ++i) {
                 const auto& bus = board.bus_departures[i];
                 int ry = y_buses[i];
-
-                if (i == 0) draw_line(24, 356, WIDTH - 24, 356, true);
 
                 // Due in badge
                 fill_rect(24, ry + 10, 116, 56, true);

@@ -180,12 +180,10 @@ The graphics subsystem is implemented in clean C++ (`dart_canvas.hpp`) without d
 1. **Section 1: DART Departures (Y: 0–220)**:
    * Inverted header title bar (Y: 0–38): `DART  •  <STATION>  •  <DIRECTION>` (e.g. `DART • SUTTON • SOUTHBOUND`).
    * Next 2 upcoming trains (Row 1 at Y: 46, Row 2 at Y: 136) featuring prominent inverted countdown badges (56px tall, `DUE` / `<min> MIN`), bold destination station (35px tall), expected departure time, and real-time status.
-   * Row divider line at Y: 133.
 2. **Section 2: Dublin Bus Departures (Y: 221–443)**:
    * Section divider line at Y: 221.
    * Inverted header title bar (Y: 223–261): `DUBLIN BUS  •  ROUTE <ROUTE>  •  <STOP NAME>` (default: Route H1, Stop 917 Admiral Park).
    * Next 2 upcoming buses (Row 1 at Y: 269, Row 2 at Y: 359) featuring large countdown badges, bold destination station (35px tall), scheduled/expected departure time, and live status (`LIVE` / `SCHED`).
-   * Row divider line at Y: 356.
 3. **Footer: Single-Line Dashboard (Y: 444–480)**:
    * Solid divider line at Y: 444 spanning the full 800px display width.
    * Clean single-line layout (`TIME | WEATHER | BATTERY`) at Y: 455:
