@@ -249,9 +249,8 @@ void getStationCoordinates(const String& code, float& outLat, float& outLon) {
     outLon = -6.120f;
 }
 
-// Static working buffers in BSS — avoids FreeRTOS 8KB stack overflow!
+// Static working buffer in BSS — avoids FreeRTOS 8KB stack overflow!
 static dart::Canvas g_canvas;
-static uint8_t      g_epd_buffer[dart::Canvas::EPD_BUFFER_SIZE];
 
 // Onboard NeoPixel status indicator for Adafruit Feather ESP32-S3
 void setStatusLed(uint8_t r, uint8_t g, uint8_t b) {
@@ -306,7 +305,7 @@ void epdReset() {
     digitalWrite(PIN_EPD_RST, HIGH);
     delay(20);
     digitalWrite(PIN_EPD_RST, LOW);
-    delay(2);
+    delay(20); // 20ms held LOW ensures clean wake up from UC8179 Deep Sleep! (was 2ms)
     digitalWrite(PIN_EPD_RST, HIGH);
     delay(20);
 }
@@ -384,7 +383,7 @@ void epdInit() {
 
 void epdDisplay(const uint8_t* buffer) {
     const size_t total = dart::Canvas::EPD_BUFFER_SIZE; // exactly 48,000 bytes (800x480/8)
-    const size_t chunkSize = 2048;
+    const size_t chunkSize = 1024;
 
     Serial.printf("[EPD] Transmitting %u bytes to DTM1 (0x10)...\n", (unsigned int)total);
     // 0x10 = Black/White transmission (DTM1)
@@ -402,13 +401,13 @@ void epdDisplay(const uint8_t* buffer) {
     epdSendCommand(0x13);
     digitalWrite(PIN_EPD_DC, HIGH);
     digitalWrite(PIN_EPD_CS, LOW);
-    uint8_t inv_chunk[chunkSize];
+    static uint8_t s_inv_chunk[1024]; // Static buffer in BSS — avoids 2KB stack hit in FreeRTOS!
     for (size_t offset = 0; offset < total; offset += chunkSize) {
         size_t len = std::min(chunkSize, total - offset);
         for (size_t b = 0; b < len; ++b) {
-            inv_chunk[b] = ~buffer[offset + b];
+            s_inv_chunk[b] = ~buffer[offset + b];
         }
-        SPI.writeBytes(inv_chunk, len);
+        SPI.writeBytes(s_inv_chunk, len);
     }
     digitalWrite(PIN_EPD_CS, HIGH);
 
@@ -539,18 +538,28 @@ void fetchDublinBusDepartures() {
         return;
     }
 
+    uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < 35000) {
+        Serial.printf("[Bus API] Memory warning (%u bytes free), skipping SSL to protect display refresh.\n", freeHeap);
+        g_last_board.bus_success = false;
+        g_last_board.bus_error_message = "Low Memory";
+        return;
+    }
+
     WiFiClientSecure client;
     client.setInsecure(); // Disable SSL certificate verification for speed & minimal RAM usage
-    client.setTimeout(8000);
+    client.setTimeout(6000);
 
     HTTPClient https;
     String url = "https://bustimes.org/stops/" + g_bus_stop_id;
-    Serial.printf("\n[Bus API] Fetching Dublin Bus timetable: %s (Free Heap: %u)\n", url.c_str(), (unsigned int)ESP.getFreeHeap());
+    Serial.printf("\n[Bus API] Fetching Dublin Bus timetable: %s (Free Heap: %u)\n", url.c_str(), freeHeap);
 
+    yield();
     if (https.begin(client, url)) {
         https.setUserAgent("Mozilla/5.0 (ESP32-S3 Commute Board)");
-        https.setTimeout(8000);
+        https.setTimeout(6000);
         int httpCode = https.GET();
+        yield();
         if (httpCode == HTTP_CODE_OK) {
             String payload = https.getString();
             Serial.printf("[Bus API] Received %d bytes HTML.\n", (int)payload.length());
@@ -570,6 +579,7 @@ void fetchDublinBusDepartures() {
         g_last_board.bus_error_message = "SSL Init Failed";
         Serial.println("[Bus API] Failed to initialize HTTPS connection to bustimes.org");
     }
+    yield();
 }
 
 uint32_t calculateSleepSeconds(const std::string& query_time) {
@@ -641,8 +651,7 @@ void showSetupScreenOnEPD() {
     Serial.println("\n[SETUP SCREEN PREVIEW]");
     g_canvas.print_ascii_screen(Serial);
 
-    g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
-    updatePhysicalDisplay(g_epd_buffer);
+    updatePhysicalDisplay(g_canvas.get_buffer());
 }
 
 String buildPortalHtml() {
@@ -1071,9 +1080,8 @@ void fetchAndRender() {
     Serial.printf("[Screen] 800x480 BMP buffer ready (%d bytes).\n", (int)g_bmp_size);
 
     // 3. Update physical Waveshare 7.5" HAT Display (safe timeout if disconnected)
-    g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
     Serial.println("Updating Waveshare 7.5\" HAT e-paper (safe timeout if disconnected)...");
-    updatePhysicalDisplay(g_epd_buffer);
+    updatePhysicalDisplay(g_canvas.get_buffer());
     g_last_refresh_ms = millis(); // Ensure at least 60s for web server before next fetch
 }
 
@@ -1115,8 +1123,7 @@ void setupPreviewServer() {
         prefs.putBool("reverse", g_reverse_mode);
         prefs.end();
         redrawCanvas(); // Instant: redraws buffer in RAM in under 1ms!
-        g_canvas.export_waveshare_v2_buffer(g_epd_buffer);
-        updatePhysicalDisplay(g_epd_buffer);
+        updatePhysicalDisplay(g_canvas.get_buffer());
         webServer.sendHeader("Location", "/");
         webServer.sendHeader("Connection", "close");
         webServer.send(302, "text/plain", "");

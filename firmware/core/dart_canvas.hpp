@@ -26,6 +26,9 @@ public:
         clear(false); // Default to white
     }
 
+    const uint8_t* get_buffer() const { return buffer; }
+    uint8_t* get_buffer() { return buffer; }
+
     void clear(bool black = false) {
         std::memset(buffer, black ? 0x00 : 0xFF, sizeof(buffer));
     }
