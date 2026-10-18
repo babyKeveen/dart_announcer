@@ -50,3 +50,25 @@ class Departure:
             "direction": self.direction,
             "train_type": self.train_type,
         }
+
+
+@dataclass
+class BusDeparture:
+    route: str
+    destination: str
+    due_in: int
+    scheduled: str
+    expected: str
+    status: str
+
+    def to_dict(self) -> dict:
+        return {
+            "route": self.route,
+            "destination": self.destination,
+            "due_in": self.due_in,
+            "due_in_text": "Due" if self.due_in <= 0 else f"{self.due_in} min",
+            "scheduled": self.scheduled,
+            "expected": self.expected,
+            "status": self.status,
+        }
+

@@ -16,12 +16,24 @@ struct Departure {
     std::string status;          // "En Route", "No Information"
 };
 
+struct BusDeparture {
+    std::string route = "H1";
+    std::string destination = "Abbey St Lower";
+    int due_in = 0;              // minutes until arrival (0 = Due)
+    std::string scheduled = "--:--"; // e.g. "08:37"
+    std::string expected = "--:--";  // e.g. "08:37"
+    std::string status = "Sched";    // "Live", "Sched"
+};
+
 struct BoardData {
     std::string station_name;
     std::string station_code;
     std::string query_time;      // e.g. "08:45"
     std::string server_date;     // e.g. "09 Oct 2026"
-    std::vector<Departure> departures;
+    std::vector<Departure> departures; // DART departures
+    std::string bus_route = "H1";
+    std::string bus_stop_name = "Stop 917 (Admiral Park)";
+    std::vector<BusDeparture> bus_departures; // Dublin Bus departures
     bool success = false;
     std::string error_message;
 };

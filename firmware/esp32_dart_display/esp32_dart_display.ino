@@ -39,6 +39,7 @@
  */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <SPI.h>
@@ -85,6 +86,11 @@ bool   g_reverse_mode  = false;
 bool   g_schedule_enabled   = true;
 int    g_schedule_start_hour = 6;   // 6 AM
 int    g_schedule_end_hour   = 19;  // 7 PM
+
+// Dublin Bus configuration (Stop 917 Admiral Park -> Route H1)
+String g_bus_route     = "H1";
+String g_bus_stop_id   = "8240DB000917";
+String g_bus_stop_name = "Stop 917 (Admiral Park)";
 
 // ================== STANDALONE PREVIEW MODE =====================
 // Set to true to test the ESP32 without a physical screen or Raspberry Pi:
@@ -259,6 +265,7 @@ void fetchAndRender();
 void redrawCanvas();
 void readBatteryStatus();
 void fetchWeather();
+void fetchDublinBusDepartures();
 void fetchDartStationsList();
 
 // ================== WAVESHARE 7.5" V2 (UC8179) DRIVER =============
@@ -524,6 +531,39 @@ void fetchWeather() {
     http.end();
 }
 
+// ======================== DUBLIN BUS REAL-TIME =====================
+void fetchDublinBusDepartures() {
+    if (WiFi.status() != WL_CONNECTED) {
+        return;
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure(); // Disable SSL certificate verification for speed & minimal RAM usage
+    client.setTimeout(6000);
+
+    HTTPClient https;
+    String url = "https://bustimes.org/stops/" + g_bus_stop_id;
+    Serial.printf("\n[Bus API] Fetching Dublin Bus timetable: %s\n", url.c_str());
+
+    if (https.begin(client, url)) {
+        https.setUserAgent("Mozilla/5.0 (ESP32-S3 Commute Board)");
+        https.setTimeout(5000);
+        int httpCode = https.GET();
+        if (httpCode == HTTP_CODE_OK) {
+            String payload = https.getString();
+            Serial.printf("[Bus API] Received %d bytes HTML.\n", (int)payload.length());
+            g_last_board.bus_departures = dart::Parser::parse_bus_html(payload.c_str(), g_bus_route.c_str(), g_last_board.query_time);
+            Serial.printf("[Bus API] Successfully parsed %d departures for route %s\n",
+                          (int)g_last_board.bus_departures.size(), g_bus_route.c_str());
+        } else {
+            Serial.printf("[Bus API] HTTP GET failed (code %d)\n", httpCode);
+        }
+        https.end();
+    } else {
+        Serial.println("[Bus API] Failed to initialize HTTPS connection to bustimes.org");
+    }
+}
+
 uint32_t calculateSleepSeconds(const std::string& query_time) {
     if (query_time.length() >= 2) {
         int hour = std::atoi(query_time.substr(0, 2).c_str());
@@ -556,10 +596,13 @@ void loadConfig() {
     g_schedule_start_hour = prefs.getInt("sched_start", 6);
     g_schedule_end_hour   = prefs.getInt("sched_end", 19);
     g_test_mode           = prefs.getBool("test_mode", true); // Default to test mode for prototyping
+    g_bus_route           = prefs.getString("bus_rt", "H1");
+    g_bus_stop_id         = prefs.getString("bus_stop", "8240DB000917");
+    g_bus_stop_name       = prefs.getString("bus_name", "Stop 917 (Admiral Park)");
     prefs.end();
 }
 
-void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir, bool reverse, bool sched_en, int sched_start, int sched_end, bool test_mode) {
+void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir, bool reverse, bool sched_en, int sched_start, int sched_end, bool test_mode, const String& bus_rt = "H1", const String& bus_stop = "8240DB000917", const String& bus_name = "Stop 917 (Admiral Park)") {
     prefs.begin("dart_cfg", false); // Read-write mode
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
@@ -570,6 +613,9 @@ void saveConfig(const String& ssid, const String& pass, const String& station, c
     prefs.putInt("sched_start", sched_start);
     prefs.putInt("sched_end", sched_end);
     prefs.putBool("test_mode", test_mode);
+    prefs.putString("bus_rt", bus_rt);
+    prefs.putString("bus_stop", bus_stop);
+    prefs.putString("bus_name", bus_name);
     prefs.end();
 }
 
@@ -680,6 +726,21 @@ String buildPortalHtml() {
     html += R"rawliteral(
       </select>
 
+      <label for="bus_route">Dublin Bus Route</label>
+      <input type="text" name="bus_route" id="bus_route" value=")rawliteral";
+    html += g_bus_route;
+    html += R"rawliteral(" placeholder="e.g. H1">
+
+      <label for="bus_stop">Dublin Bus Stop GTFS ID</label>
+      <input type="text" name="bus_stop" id="bus_stop" value=")rawliteral";
+    html += g_bus_stop_id;
+    html += R"rawliteral(" placeholder="e.g. 8240DB000917">
+
+      <label for="bus_name">Dublin Bus Stop Name</label>
+      <input type="text" name="bus_name" id="bus_name" value=")rawliteral";
+    html += g_bus_stop_name;
+    html += R"rawliteral(" placeholder="e.g. Stop 917 (Admiral Park)">
+
       <label for="theme">Display Theme</label>
       <select name="theme" id="theme">
 )rawliteral";
@@ -723,6 +784,13 @@ void handleSaveConfig() {
     bool reverse = (webServer.arg("theme") == "1");
     bool sched_en = (webServer.arg("sched_en") != "0");
     bool test_mode = (webServer.arg("op_mode") != "0");
+    String bus_rt = webServer.arg("bus_route");
+    String bus_stop = webServer.arg("bus_stop");
+    String bus_name = webServer.arg("bus_name");
+
+    if (bus_rt.length() == 0) bus_rt = g_bus_route;
+    if (bus_stop.length() == 0) bus_stop = g_bus_stop_id;
+    if (bus_name.length() == 0) bus_name = g_bus_stop_name;
 
     // Preserve existing credentials if omitted on web dashboard
     if (ssid.length() == 0) {
@@ -734,10 +802,10 @@ void handleSaveConfig() {
 
     bool wifiChanged = (ssid != g_wifi_ssid || (pass.length() > 0 && pass != g_wifi_password));
 
-    Serial.printf("[CONFIG] Saved: SSID='%s', Station='%s', Dir='%s', Reverse=%d, Sched=%d, TestMode=%d\n",
-        ssid.c_str(), station.c_str(), dir.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
+    Serial.printf("[CONFIG] Saved: SSID='%s', Station='%s', Dir='%s', Bus='%s' (%s), Reverse=%d, Sched=%d, TestMode=%d\n",
+        ssid.c_str(), station.c_str(), dir.c_str(), bus_rt.c_str(), bus_stop.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
 
-    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19, test_mode);
+    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19, test_mode, bus_rt, bus_stop, bus_name);
     loadConfig();
 
     if (wifiChanged) {
@@ -903,6 +971,7 @@ String buildPreviewHtml() {
     }
 
     html += "<div>Station: <b>" + String(g_last_board.station_name.c_str()) + "</b></div>";
+    html += "<div>Dublin Bus: <b>" + String(g_last_board.bus_route.c_str()) + " (" + String(g_last_board.bus_stop_name.c_str()) + ")</b></div>";
     html += "<div>Query Time: <b>" + String(g_last_board.query_time.c_str()) + "</b></div>";
     html += "<div>Rain Chance: <b>" + rainInfo + "</b></div>";
     html += "<div>Battery: <b>" + batInfo + "</b></div>";
@@ -982,6 +1051,11 @@ void fetchAndRender() {
         g_last_board.query_time = "--:--";
         g_last_board.error_message = "Irish Rail API Offline";
     }
+
+    // Fetch Dublin Bus departures for configured stop
+    g_last_board.bus_route = g_bus_route.c_str();
+    g_last_board.bus_stop_name = g_bus_stop_name.c_str();
+    fetchDublinBusDepartures();
 
     redrawCanvas();
 

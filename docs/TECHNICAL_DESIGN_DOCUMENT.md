@@ -18,13 +18,14 @@ The device downloads live transit XML feeds directly from the public Irish Rail 
 flowchart TD
     subgraph External_Services["External Services"]
         IR["Irish Rail Realtime API\n(getStationDataByCodeXML)"]
+        DB["Dublin Bus Timetable Feed\n(bustimes.org Stop 917 H1)"]
         OM["Open-Meteo Weather API\n(Forecast & Precipitation)"]
     end
 
     subgraph ESP32S3["Adafruit ESP32-S3 Feather"]
         WiFi["Wi-Fi / mDNS Engine\n(dart-display.local)"]
-        Parser["XML Parsing Engine\n(dart::Parser)"]
-        Canvas["800x480 1-Bit Canvas Engine\n(dart::Canvas)"]
+        Parser["XML & HTML Parsing Engine\n(dart::Parser)"]
+        Canvas["800x480 1-Bit Canvas Engine\n(3-Section Multimodal Board)"]
         WebServer["Embedded Web Server\n(Live BMP Preview & Portal)"]
         EPD_Driver["Waveshare UC8179 Driver\n(Booster Soft-Start & Inverted DTM)"]
         FuelGauge["MAX17048 I2C Fuel Gauge\n(Battery Telemetry)"]
@@ -36,6 +37,7 @@ flowchart TD
     end
 
     IR -->|HTTP XML| Parser
+    DB -->|HTTPS HTML| Parser
     OM -->|HTTP JSON| WiFi
     WiFi --> Parser
     Parser --> Canvas
@@ -174,13 +176,19 @@ The graphics subsystem is implemented in clean C++ (`dart_canvas.hpp`) without d
   * Bit value `1` = White (Background)
   * Bit value `0` = Black (Ink)
 
-#### Visual Hierarchy:
-1. **Header Banner (Y: 0–68)**: Station Name (Bold 36pt), Direction Indicator badge, and live Query Time.
-2. **Column Titles (Y: 72–94)**: `DUE`, `DESTINATION`, `EXP`, `STATUS`.
-3. **Departures Rows (Y: 98–424)**: Up to 5 departure rows rendered with dynamic countdown badges, destination station, expected departure timestamp, and real-time status.
-4. **Footer Telemetry (Y: 436–479)**:
-   * Left: Setup Portal IP and network status.
-   * Right: Weather telemetry (temperature, rain chance) and Battery percentage ($X: 678–776, Y: 448–466$).
+#### Visual Hierarchy (3-Section Multimodal Commute Layout):
+1. **Section 1: DART Departures (Y: 0–153)**:
+   * Inverted header title bar (Y: 0–36): `DART  •  <STATION>  •  <DIRECTION>` (e.g. `DART • SUTTON • SOUTHBOUND`).
+   * Next 2 upcoming trains (Row 1 at Y: 42, Row 2 at Y: 96) featuring high-contrast inverted countdown badges (`DUE` / `<min> MIN`), bold destination station (32px), expected departure time, and live status.
+2. **Section 2: Dublin Bus Departures (Y: 154–307)**:
+   * Inverted header title bar (Y: 154–190): `DUBLIN BUS  •  ROUTE <ROUTE>  •  <STOP NAME>` (default: Route H1, Stop 917 Admiral Park).
+   * Next 2 upcoming buses (Row 1 at Y: 196, Row 2 at Y: 250) featuring live countdown badges, destination station, scheduled/expected time, and real-time tracking status (`LIVE` / `SCHED`).
+3. **Section 3: Time, Weather & System Dashboard (Y: 308–480)**:
+   * Solid 4-pixel divider line at Y: 308 spanning the full 800px display width.
+   * Divided into 3 dedicated telemetry columns via vertical dividers at X: 275 and X: 545:
+     * **Column 1: Current Time & Date (X: 24–270)**: Massive 42px digital clock (`HH:MM`), day/date indicator, and web dashboard URL.
+     * **Column 2: Expected Weather (X: 295–540)**: Large temperature display (35px), rain probability percentage, and dynamic commuter advisory (`UMBRELLA ADVISED` vs `BALDOYLE & SUTTON`).
+     * **Column 3: Battery & System (X: 565–780)**: Battery percentage, visual multi-segment battery gauge, power source (`POWER: USB (DESK)` vs `POWER: LIPO BATTERY`), and refresh rate.
 
 ---
 

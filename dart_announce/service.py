@@ -1,10 +1,10 @@
 """Combine config, station resolution, and the Irish Rail client into a display-ready result."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import irish_rail_client, stations, weather_client
 from .config import Settings
-from .models import Departure
+from .models import BusDeparture, Departure
 
 
 @dataclass
@@ -15,6 +15,9 @@ class DeparturesResult:
     rain_chance: int | None = None
     temperature: float | None = None
     tomorrow_weather: weather_client.DailyForecast | None = None
+    bus_route: str = "H1"
+    bus_stop_name: str = "Stop 917 (Admiral Park)"
+    bus_departures: list[BusDeparture] = field(default_factory=list)
 
 
 def get_departures(settings: Settings) -> DeparturesResult:
@@ -38,7 +41,19 @@ def get_departures(settings: Settings) -> DeparturesResult:
         rain_chance=_get_rain_chance(station),
         temperature=_get_temperature(station),
         tomorrow_weather=_get_tomorrow_weather(station),
+        bus_route="H1",
+        bus_stop_name="Stop 917 (Admiral Park)",
+        bus_departures=_get_bus_departures(),
     )
+
+
+def _get_bus_departures() -> list[BusDeparture]:
+    """Fetch live Dublin Bus departures for Stop 917 (Route H1). Degrades gracefully to []."""
+    try:
+        from . import dublin_bus_client
+        return dublin_bus_client.fetch_bus_departures(stop_id="8240DB000917", route_filter="H1")[:2]
+    except Exception:
+        return []
 
 
 def _get_rain_chance(station: dict) -> int | None:
@@ -95,6 +110,10 @@ def build_trmnl_payload(result: DeparturesResult, direction: str | None = None) 
             "has_departures": len(result.departures) > 0,
             "departure_count": len(result.departures),
             "departures": [d.to_dict() for d in result.departures],
+            "bus_route": result.bus_route,
+            "bus_stop": result.bus_stop_name,
+            "has_bus_departures": len(result.bus_departures) > 0,
+            "bus_departures": [b.to_dict() for b in result.bus_departures],
         }
     }
 

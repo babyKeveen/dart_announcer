@@ -239,150 +239,176 @@ public:
         }
     }
 
-    // High-level 800x480 kitchen commute board layout for Waveshare 7.5" HAT
+    // Three-Section Commuter Display Layout:
+    // Section 1 (Y: 0–153): DART - Sutton - Southbound (Next 2 Trains)
+    // Section 2 (Y: 154–307): Dublin Bus - Route H1 - Stop 917 (Admiral Park) (Next 2 Buses)
+    // Section 3 (Y: 308–480): Current Time, Expected Weather, Battery & Network Dashboard
     void render_commute_board(
         const BoardData& board,
         int battery_percent = -1,
-        const std::string& filter_dir = "",
+        const std::string& filter_dir = "Southbound",
         int rain_chance = -1,
         float temp_c = -99.0f
     ) {
         clear(false); // Crisp white background
 
-        // 1. Header (Black banner with white text, Y: 0 to 66)
-        fill_rect(0, 0, WIDTH, 66, true);
+        // ================= SECTION 1: DART =================
+        // Title Bar (Y: 0 to 36)
+        fill_rect(0, 0, WIDTH, 36, true);
+        std::string dart_st = board.station_name.empty() ? "SUTTON" : board.station_name;
+        std::transform(dart_st.begin(), dart_st.end(), dart_st.begin(), ::toupper);
+        std::string dart_dir = (filter_dir.empty() || filter_dir == "Both") ? "SOUTHBOUND" : filter_dir;
+        std::transform(dart_dir.begin(), dart_dir.end(), dart_dir.begin(), ::toupper);
 
-        // Digital Clock on top-right (Large kitchen wall clock scale 5, 35px high)
-        std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
-        int clock_w = get_string_width(clock, 5);
-        int clock_x = WIDTH - clock_w - 24;
-        draw_string(clock_x, 15, clock, false, 5);
+        std::string dart_title = "DART  •  " + dart_st + "  •  " + dart_dir;
+        draw_string(24, 8, dart_title, false, 3);
 
-        // Station name + direction badge
-        std::string title = board.station_name.empty() ? "DART COMMUTE" : board.station_name;
-        std::transform(title.begin(), title.end(), title.begin(), ::toupper);
-        title = "DART • " + title;
-
-        int max_title_w = clock_x - 30;
-        if (!filter_dir.empty() && filter_dir != "Both") {
-            std::string dir_badge = "[" + filter_dir + "]";
-            std::transform(dir_badge.begin(), dir_badge.end(), dir_badge.begin(), ::toupper);
-            int dir_w = get_string_width(dir_badge, 2);
-            max_title_w -= (dir_w + 14);
-
-            int title_scale = (get_string_width(title, 4) > max_title_w) ? 3 : 4;
-            int title_y = (title_scale == 4) ? 18 : 22;
-            draw_string(24, title_y, title, false, title_scale);
-            int cur_title_w = get_string_width(title, title_scale);
-            draw_string(24 + cur_title_w + 14, 26, dir_badge, false, 2);
+        // Next 2 DART Departures (Row 1 at Y: 42, Row 2 at Y: 96)
+        if (board.departures.empty()) {
+            draw_string(180, 80, "NO UPCOMING DART DEPARTURES", true, 3);
         } else {
-            int title_scale = (get_string_width(title, 4) > max_title_w) ? 3 : 4;
-            int title_y = (title_scale == 4) ? 18 : 22;
-            draw_string(24, title_y, title, false, title_scale);
-        }
-
-        // 2. Weather Telemetry Strip (Large scale 3, 21px high, readable across room)
-        std::string weather_text;
-        if (rain_chance >= 0) {
-            char wbuf[64];
-            if (temp_c > -50.0f) {
-                snprintf(wbuf, sizeof(wbuf), "CHANCE OF RAIN: %d%%  •  %.1f°C", rain_chance, temp_c);
-            } else {
-                snprintf(wbuf, sizeof(wbuf), "CHANCE OF RAIN: %d%%", rain_chance);
-            }
-            weather_text = wbuf;
-        } else {
-            weather_text = "WEATHER DATA UNAVAILABLE";
-        }
-
-        int wt_w = get_string_width(weather_text, 3);
-        if (rain_chance >= 40) {
-            // Prominent inverted badge when high rain chance expected
-            fill_rect(20, 71, wt_w + 14, 27, true);
-            draw_string(26, 74, weather_text, false, 3);
-        } else {
-            draw_string(24, 74, weather_text, true, 3);
-        }
-        draw_line(20, 102, WIDTH - 20, 102, true);
-
-        // 3. Column Headers Strip (Y: 108 to 136)
-        fill_rect(20, 108, WIDTH - 40, 28, true);
-        draw_string(28, 114, "#", false, 2);
-        draw_string(64, 114, "DESTINATION", false, 2);
-        draw_string(370, 114, "DUE IN", false, 2);
-        draw_string(540, 114, "EXPECTED", false, 2);
-        draw_string(660, 114, "STATUS", false, 2);
-
-        // 4. Departures Table (Up to 5 rows, Y: 138 to 440)
-        if (!board.success && !board.error_message.empty()) {
-            draw_string(140, 240, "ERROR CONNECTING TO IRISH RAIL API", true, 3);
-            draw_string(180, 280, board.error_message.substr(0, 45), true, 2);
-        } else if (board.departures.empty()) {
-            draw_string(160, 240, "NO UPCOMING DART DEPARTURES", true, 3);
-            draw_string(220, 280, "CHECK TIMETABLE (NEXT 90 MIN)", true, 2);
-        } else {
-            int y_starts[5] = {140, 200, 260, 320, 380};
-            size_t max_rows = std::min((size_t)5, board.departures.size());
-
-            for (size_t i = 0; i < max_rows; ++i) {
+            size_t max_trains = std::min((size_t)2, board.departures.size());
+            int y_trains[2] = {42, 96};
+            for (size_t i = 0; i < max_trains; ++i) {
                 const auto& dep = board.departures[i];
-                int row_y = y_starts[i];
+                int ry = y_trains[i];
 
-                // Horizontal row divider line
-                draw_line(20, row_y + 54, WIDTH - 20, row_y + 54, true);
+                if (i == 0) draw_line(24, 94, WIDTH - 24, 94, true);
 
-                // Row index number (1, 2, 3, 4, 5)
-                std::string idx_str = std::to_string(i + 1);
-                draw_string(28, row_y + 16, idx_str, true, 3);
+                // Due in badge (solid black rectangle with white text)
+                fill_rect(24, ry + 2, 96, 44, true);
+                std::string due_txt = (dep.due_in <= 0) ? "DUE" : (std::to_string(dep.due_in) + " MIN");
+                int due_w = get_string_width(due_txt, 3);
+                int due_x = 24 + (96 - due_w) / 2;
+                draw_string(due_x, ry + 12, due_txt, false, 3);
 
-                // Destination name (Bold large scale 4, 28px tall!)
+                // Destination (scale 4, 28px tall!)
                 std::string dest = dep.destination;
                 std::transform(dest.begin(), dest.end(), dest.begin(), ::toupper);
-                if (dest.length() > 12) {
-                    dest = dest.substr(0, 11) + ".";
-                }
-                draw_string(64, row_y + 12, dest, true, 4);
+                if (dest.length() > 16) dest = dest.substr(0, 15) + ".";
+                draw_string(140, ry + 10, dest, true, 4);
 
-                // Due in time (Bold large scale 4, 28px tall countdown!)
-                std::string due_text;
-                if (dep.due_in <= 0) {
-                    due_text = "DUE";
-                } else {
-                    due_text = std::to_string(dep.due_in) + " MIN";
-                }
-                draw_string(370, row_y + 12, due_text, true, 4);
+                // Expected time
+                std::string exp_txt = "EXP: " + (dep.expected.empty() ? "--:--" : dep.expected);
+                draw_string(520, ry + 14, exp_txt, true, 3);
 
-                // Expected clock time (scale 3, 21px tall)
-                std::string exp_time = dep.expected.empty() ? "--:--" : dep.expected;
-                draw_string(540, row_y + 16, exp_time, true, 3);
-
-                // Status column (scale 3, 21px tall)
+                // Status
                 std::string st = dep.status;
-                if (st.empty() || st == "No Information") {
-                    st = "ON TIME";
-                } else {
-                    std::transform(st.begin(), st.end(), st.begin(), ::toupper);
-                }
-
+                if (st.empty() || st == "No Information") st = "ON TIME";
+                std::transform(st.begin(), st.end(), st.begin(), ::toupper);
                 if (st.find("DELAY") != std::string::npos || st.find("LATE") != std::string::npos) {
                     int sw = get_string_width(st, 2);
-                    fill_rect(656, row_y + 14, sw + 12, 24, true);
-                    draw_string(662, row_y + 18, st, false, 2);
+                    fill_rect(670, ry + 12, sw + 12, 24, true);
+                    draw_string(676, ry + 16, st, false, 2);
                 } else {
-                    draw_string(660, row_y + 16, st, true, 3);
+                    draw_string(675, ry + 14, st, true, 3);
                 }
             }
         }
 
-        // 5. Battery Telemetry (Bottom Right, Y: 446 to 472)
-        if (battery_percent >= 0) {
-            std::string bat_str = std::to_string(battery_percent) + "%";
-            int bs_w = get_string_width(bat_str, 2);
-            int bat_icon_w = 40; // 18*scale + nub_w (36 + 4)
-            int bat_x = WIDTH - 24 - bat_icon_w;
-            draw_battery(bat_x, 448, battery_percent, true, 2);
-            draw_string(bat_x - bs_w - 10, 450, bat_str, true, 2);
+        // ================= SECTION 2: DUBLIN BUS =================
+        // Title Bar (Y: 154 to 190)
+        fill_rect(0, 154, WIDTH, 36, true);
+        std::string bus_rt = board.bus_route.empty() ? "H1" : board.bus_route;
+        std::string bus_st = board.bus_stop_name.empty() ? "STOP 917 (ADMIRAL PARK)" : board.bus_stop_name;
+        std::transform(bus_rt.begin(), bus_rt.end(), bus_rt.begin(), ::toupper);
+        std::transform(bus_st.begin(), bus_st.end(), bus_st.begin(), ::toupper);
+
+        std::string bus_title = "DUBLIN BUS  •  ROUTE " + bus_rt + "  •  " + bus_st;
+        draw_string(24, 162, bus_title, false, 3);
+
+        // Next 2 Bus Departures (Row 1 at Y: 196, Row 2 at Y: 250)
+        if (board.bus_departures.empty()) {
+            draw_string(180, 234, "CONNECTING TO DUBLIN BUS...", true, 3);
+        } else {
+            size_t max_buses = std::min((size_t)2, board.bus_departures.size());
+            int y_buses[2] = {196, 250};
+            for (size_t i = 0; i < max_buses; ++i) {
+                const auto& bus = board.bus_departures[i];
+                int ry = y_buses[i];
+
+                if (i == 0) draw_line(24, 248, WIDTH - 24, 248, true);
+
+                // Due in badge
+                fill_rect(24, ry + 2, 96, 44, true);
+                std::string due_txt = (bus.due_in <= 0) ? "DUE" : (std::to_string(bus.due_in) + " MIN");
+                int due_w = get_string_width(due_txt, 3);
+                int due_x = 24 + (96 - due_w) / 2;
+                draw_string(due_x, ry + 12, due_txt, false, 3);
+
+                // Destination
+                std::string dest = bus.destination;
+                std::transform(dest.begin(), dest.end(), dest.begin(), ::toupper);
+                if (dest.length() > 16) dest = dest.substr(0, 15) + ".";
+                draw_string(140, ry + 10, dest, true, 4);
+
+                // Expected / Scheduled time
+                std::string exp_txt = "EXP: " + (bus.expected.empty() ? "--:--" : bus.expected);
+                draw_string(520, ry + 14, exp_txt, true, 3);
+
+                // Status (Live / Scheduled)
+                std::string st = bus.status;
+                std::transform(st.begin(), st.end(), st.begin(), ::toupper);
+                draw_string(675, ry + 14, st, true, 3);
+            }
         }
+
+        // ================= SECTION 3: TIME, WEATHER & BATTERY =================
+        // Thick Divider (Y: 308 to 311)
+        fill_rect(0, 308, WIDTH, 4, true);
+
+        // Vertical separators at X: 275 and X: 545
+        draw_line(275, 318, 275, 472, true);
+        draw_line(545, 318, 545, 472, true);
+
+        // Column 1: Current Time & Date (X: 24 to 260)
+        draw_string(24, 322, "CURRENT TIME", true, 2);
+        std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
+        draw_string(24, 346, clock, true, 6); // 42px tall digits!
+        std::string d_str = board.server_date.empty() ? "LIVE COMMUTER" : board.server_date;
+        std::transform(d_str.begin(), d_str.end(), d_str.begin(), ::toupper);
+        draw_string(24, 414, d_str, true, 2);
+        draw_string(24, 442, "HTTP://DART-DISPLAY.LOCAL/", true, 2);
+
+        // Column 2: Expected Weather (X: 295 to 530)
+        draw_string(295, 322, "EXPECTED WEATHER", true, 2);
+        char t_buf[32];
+        if (temp_c > -50.0f) snprintf(t_buf, sizeof(t_buf), "%.1f°C", temp_c);
+        else strcpy(t_buf, "--°C");
+        draw_string(295, 346, t_buf, true, 5); // Large temperature!
+
+        char r_buf[32];
+        if (rain_chance >= 0) snprintf(r_buf, sizeof(r_buf), "RAIN CHANCE: %d%%", rain_chance);
+        else strcpy(r_buf, "RAIN CHANCE: --%");
+
+        if (rain_chance >= 40) {
+            int rw = get_string_width(r_buf, 2);
+            fill_rect(295, 410, rw + 14, 24, true);
+            draw_string(302, 414, r_buf, false, 2);
+            draw_string(295, 442, "UMBRELLA ADVISED", true, 2);
+        } else {
+            draw_string(295, 414, r_buf, true, 2);
+            draw_string(295, 442, "BALDOYLE & SUTTON", true, 2);
+        }
+
+        // Column 3: Battery & System (X: 565 to 780)
+        draw_string(565, 322, "BATTERY & SYSTEM", true, 2);
+        std::string bat_s = (battery_percent >= 0) ? (std::to_string(battery_percent) + "%") : "--%";
+        draw_string(565, 346, bat_s, true, 5);
+
+        // Battery Icon
+        int bat_icon_x = 680;
+        int bat_icon_y = 352;
+        draw_rect(bat_icon_x, bat_icon_y, 56, 26, true);
+        fill_rect(bat_icon_x + 56, bat_icon_y + 7, 4, 12, true);
+        if (battery_percent > 0) {
+            int fill_w = std::min(48, std::max(2, (battery_percent * 48) / 100));
+            fill_rect(bat_icon_x + 4, bat_icon_y + 4, fill_w, 18, true);
+        }
+
+        std::string pwr_str = (battery_percent == 100) ? "POWER: USB (DESK)" : "POWER: LIPO BATTERY";
+        draw_string(565, 414, pwr_str, true, 2);
+        draw_string(565, 442, "AUTO-REFRESH: 60 SEC", true, 2);
     }
 
     // Scheduled Down Period: Clock & Tomorrow's Weather Screen (800x480)
