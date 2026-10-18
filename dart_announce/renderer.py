@@ -467,7 +467,8 @@ def _render_reverse(
 
 
 # =====================================================================
-# STYLE 5: COMMUTE (3-Section Multimodal Board: DART + Bus + Dashboard)
+# =====================================================================
+# STYLE 5: COMMUTE (2 Sections: DART & Bus + 1-Line Footer: Time | Weather | Battery)
 # =====================================================================
 def _render_commute(
     result: DeparturesResult,
@@ -478,140 +479,134 @@ def _render_commute(
     draw = ImageDraw.Draw(img)
 
     f_title = _load_font("BebasNeue.ttf", 26)
-    f_badge = _load_font("BebasNeue.ttf", 24)
-    f_dest = _load_font("BebasNeue.ttf", 32)
-    f_sub = _load_font("Oswald.ttf", 20)
-    f_status = _load_font("Oswald.ttf", 18)
-    f_meta = _load_font("Oswald.ttf", 14)
-    f_large_clock = _load_font("BebasNeue.ttf", 52)
-    f_large_temp = _load_font("BebasNeue.ttf", 46)
+    f_badge = _load_font("BebasNeue.ttf", 28)
+    f_dest_lg = _load_font("BebasNeue.ttf", 40)
+    f_dest_md = _load_font("BebasNeue.ttf", 34)
+    f_sub = _load_font("Oswald.ttf", 22)
+    f_status = _load_font("Oswald.ttf", 20)
+    f_footer = _load_font("Oswald.ttf", 16)
 
     # ================= SECTION 1: DART =================
-    # Title Bar (Y: 0 to 36)
-    draw.rectangle([(0, 0), (WIDTH, 36)], fill=0)
+    # Title Bar (Y: 0 to 38)
+    draw.rectangle([(0, 0), (WIDTH, 38)], fill=0)
     st_name = result.station_name.upper() if result.station_name else "SUTTON"
     dir_str = direction.upper() if direction else "SOUTHBOUND"
     dart_title = f"DART  •  {st_name}  •  {dir_str}"
-    draw.text((24, 6), dart_title, fill=1, font=f_title)
+    draw.text((24, 7), dart_title, fill=1, font=f_title)
 
-    # Next 2 Trains (Row 1 at Y: 42, Row 2 at Y: 96)
-    y_trains = [42, 96]
+    # Next 2 Trains (Row 1 at Y: 46, Row 2 at Y: 136)
+    y_trains = [46, 136]
     if not result.departures:
-        draw.text((180, 80), "CONNECTING TO IRISH RAIL...", fill=0, font=f_dest)
+        draw.text((180, 115), "CONNECTING TO IRISH RAIL...", fill=0, font=f_dest_lg)
     else:
         for i, d in enumerate(result.departures[:2]):
             ry = y_trains[i]
             if i == 0:
-                draw.line([(24, 94), (WIDTH - 24, 94)], fill=0, width=1)
+                draw.line([(24, 133), (WIDTH - 24, 133)], fill=0, width=1)
 
             # Due in badge
-            draw.rectangle([(24, ry + 2), (120, ry + 46)], fill=0)
+            draw.rectangle([(24, ry + 10), (140, ry + 66)], fill=0)
             due_txt = "DUE" if d.due_in <= 0 else f"{d.due_in} MIN"
             due_bbox = f_badge.getbbox(due_txt)
             due_w = due_bbox[2] - due_bbox[0]
-            draw.text((24 + (96 - due_w) // 2, ry + 12), due_txt, fill=1, font=f_badge)
+            draw.text((24 + (116 - due_w) // 2, ry + 22), due_txt, fill=1, font=f_badge)
 
             # Destination
             dest = d.destination.upper()
             if len(dest) > 16:
                 dest = dest[:15] + "."
-            draw.text((140, ry + 8), dest, fill=0, font=f_dest)
+            f_d = f_dest_md if len(dest) > 12 else f_dest_lg
+            draw.text((160, ry + 16), dest, fill=0, font=f_d)
 
             # Expected
             exp_txt = f"EXP: {d.expected if d.expected else '--:--'}"
-            draw.text((520, ry + 14), exp_txt, fill=0, font=f_sub)
+            draw.text((520, ry + 26), exp_txt, fill=0, font=f_sub)
 
             # Status
             st = d.status.upper() if d.status and d.status != "No Information" else "ON TIME"
-            draw.text((675, ry + 14), st, fill=0, font=f_status)
+            draw.text((675, ry + 26), st, fill=0, font=f_status)
+
+    # ================= SECTION DIVIDER =================
+    draw.line([(0, 221), (WIDTH, 221)], fill=0, width=2)
 
     # ================= SECTION 2: DUBLIN BUS =================
-    # Title Bar (Y: 154 to 190)
-    draw.rectangle([(0, 154), (WIDTH, 190)], fill=0)
+    # Title Bar (Y: 223 to 261)
+    draw.rectangle([(0, 223), (WIDTH, 261)], fill=0)
     bus_rt = (result.bus_route or "H1").upper()
     bus_st = (result.bus_stop_name or "STOP 917 (ADMIRAL PARK)").upper()
     bus_title = f"DUBLIN BUS  •  ROUTE {bus_rt}  •  {bus_st}"
-    draw.text((24, 160), bus_title, fill=1, font=f_title)
+    draw.text((24, 230), bus_title, fill=1, font=f_title)
 
-    # Next 2 Buses (Row 1 at Y: 196, Row 2 at Y: 250)
-    y_buses = [196, 250]
+    # Next 2 Buses (Row 1 at Y: 269, Row 2 at Y: 359)
+    y_buses = [269, 359]
     if not result.bus_departures:
-        draw.text((180, 234), "CONNECTING TO DUBLIN BUS...", fill=0, font=f_dest)
+        draw.text((180, 338), "CONNECTING TO DUBLIN BUS...", fill=0, font=f_dest_lg)
     else:
         for i, b in enumerate(result.bus_departures[:2]):
             ry = y_buses[i]
             if i == 0:
-                draw.line([(24, 248), (WIDTH - 24, 248)], fill=0, width=1)
+                draw.line([(24, 356), (WIDTH - 24, 356)], fill=0, width=1)
 
             # Due in badge
-            draw.rectangle([(24, ry + 2), (120, ry + 46)], fill=0)
+            draw.rectangle([(24, ry + 10), (140, ry + 66)], fill=0)
             due_txt = "DUE" if b.due_in <= 0 else f"{b.due_in} MIN"
             due_bbox = f_badge.getbbox(due_txt)
             due_w = due_bbox[2] - due_bbox[0]
-            draw.text((24 + (96 - due_w) // 2, ry + 12), due_txt, fill=1, font=f_badge)
+            draw.text((24 + (116 - due_w) // 2, ry + 22), due_txt, fill=1, font=f_badge)
 
             # Destination
             b_dest = b.destination.upper()
             if len(b_dest) > 16:
                 b_dest = b_dest[:15] + "."
-            draw.text((140, ry + 8), b_dest, fill=0, font=f_dest)
+            f_d = f_dest_md if len(b_dest) > 12 else f_dest_lg
+            draw.text((160, ry + 16), b_dest, fill=0, font=f_d)
 
             # Expected
             exp_txt = f"EXP: {b.expected if b.expected else '--:--'}"
-            draw.text((520, ry + 14), exp_txt, fill=0, font=f_sub)
+            draw.text((520, ry + 26), exp_txt, fill=0, font=f_sub)
 
             # Status
             st = b.status.upper()
-            draw.text((675, ry + 14), st, fill=0, font=f_status)
+            draw.text((675, ry + 26), st, fill=0, font=f_status)
 
-    # ================= SECTION 3: TIME, WEATHER & BATTERY =================
-    # Thick Divider (Y: 308 to 312)
-    draw.rectangle([(0, 308), (WIDTH, 312)], fill=0)
+    # ================= FOOTER: SINGLE LINE FOR TIME | WEATHER | BATTERY =================
+    # Divider Line at Y: 444
+    draw.line([(0, 444), (WIDTH, 444)], fill=0, width=2)
 
-    # Vertical separators at X: 275 and X: 545
-    draw.line([(275, 318), (275, 472)], fill=0, width=1)
-    draw.line([(545, 318), (545, 472)], fill=0, width=1)
-
-    # Column 1: Current Time & Date (X: 24 to 260)
-    draw.text((24, 322), "CURRENT TIME", fill=0, font=f_meta)
+    # 1. Time (Left, X: 24)
     clock_str = datetime.now().strftime("%H:%M")
-    draw.text((24, 344), clock_str, fill=0, font=f_large_clock)
-    date_str = datetime.now().strftime("%a %d %b %Y").upper()
-    draw.text((24, 414), date_str, fill=0, font=f_meta)
-    draw.text((24, 442), "HTTP://DART-DISPLAY.LOCAL/", fill=0, font=f_meta)
+    date_str = datetime.now().strftime("%a %d %b").upper()
+    draw.text((24, 452), f"TIME: {clock_str}  ({date_str})", fill=0, font=f_footer)
 
-    # Column 2: Expected Weather (X: 295 to 530)
-    draw.text((295, 322), "EXPECTED WEATHER", fill=0, font=f_meta)
+    # Separator 1
+    draw.text((275, 452), "|", fill=0, font=f_footer)
+
+    # 2. Weather (Center, X: 295)
     temp_str = f"{result.temperature:.1f}°C" if result.temperature is not None else "--°C"
-    draw.text((295, 344), temp_str, fill=0, font=f_large_temp)
-
     rain_val = result.rain_chance if result.rain_chance is not None else -1
-    rain_str = f"RAIN CHANCE: {rain_val}%" if rain_val >= 0 else "RAIN CHANCE: --%"
-    if rain_val >= 40:
-        r_bbox = f_meta.getbbox(rain_str)
-        rw = r_bbox[2] - r_bbox[0]
-        draw.rectangle([(295, 410), (295 + rw + 14, 434)], fill=0)
-        draw.text((302, 414), rain_str, fill=1, font=f_meta)
-        draw.text((295, 442), "UMBRELLA ADVISED", fill=0, font=f_meta)
-    else:
-        draw.text((295, 414), rain_str, fill=0, font=f_meta)
-        draw.text((295, 442), "BALDOYLE & SUTTON", fill=0, font=f_meta)
+    rain_txt = f"RAIN: {rain_val}%" if rain_val >= 0 else "RAIN: --%"
+    weather_full = f"WEATHER: {temp_str}  •  {rain_txt}"
+    draw.text((295, 452), weather_full, fill=0, font=f_footer)
 
-    # Column 3: Battery & System (X: 565 to 780)
-    draw.text((565, 322), "BATTERY & SYSTEM", fill=0, font=f_meta)
+    if rain_val >= 40:
+        w_bbox = f_footer.getbbox(weather_full)
+        ww = w_bbox[2] - w_bbox[0]
+        draw.rectangle([(295 + ww + 10, 450), (295 + ww + 96, 470)], fill=0)
+        draw.text((295 + ww + 16, 452), "UMBRELLA", fill=1, font=f_footer)
+
+    # Separator 2
+    draw.text((545, 452), "|", fill=0, font=f_footer)
+
+    # 3. Battery (Right, X: 565)
     bat_pct = battery if battery is not None else 100
-    draw.text((565, 344), f"{bat_pct}%", fill=0, font=f_large_temp)
+    draw.text((565, 452), f"BATTERY: {bat_pct}%", fill=0, font=f_footer)
 
     # Visual battery gauge
-    bx, by, bw, bh = 680, 352, 56, 26
+    bx, by, bw, bh = 736, 452, 34, 16
     draw.rectangle([(bx, by), (bx + bw, by + bh)], outline=0, width=1)
-    draw.rectangle([(bx + bw, by + 7), (bx + bw + 4, by + 19)], fill=0)
-    fill_w = max(2, min(48, int(48 * (bat_pct / 100.0))))
+    draw.rectangle([(bx + bw, by + 4), (bx + bw + 3, by + 12)], fill=0)
+    fill_w = max(2, min(26, int(26 * (bat_pct / 100.0))))
     draw.rectangle([(bx + 4, by + 4), (bx + 4 + fill_w, by + bh - 4)], fill=0)
-
-    pwr_str = "POWER: USB (DESK)" if bat_pct == 100 else "POWER: LIPO BATTERY"
-    draw.text((565, 414), pwr_str, fill=0, font=f_meta)
-    draw.text((565, 442), "AUTO-REFRESH: 60 SEC", fill=0, font=f_meta)
 
     return img
 

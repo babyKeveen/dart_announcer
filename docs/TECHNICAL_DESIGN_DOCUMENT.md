@@ -176,19 +176,22 @@ The graphics subsystem is implemented in clean C++ (`dart_canvas.hpp`) without d
   * Bit value `1` = White (Background)
   * Bit value `0` = Black (Ink)
 
-#### Visual Hierarchy (3-Section Multimodal Commute Layout):
-1. **Section 1: DART Departures (Y: 0–153)**:
-   * Inverted header title bar (Y: 0–36): `DART  •  <STATION>  •  <DIRECTION>` (e.g. `DART • SUTTON • SOUTHBOUND`).
-   * Next 2 upcoming trains (Row 1 at Y: 42, Row 2 at Y: 96) featuring high-contrast inverted countdown badges (`DUE` / `<min> MIN`), bold destination station (32px), expected departure time, and live status.
-2. **Section 2: Dublin Bus Departures (Y: 154–307)**:
-   * Inverted header title bar (Y: 154–190): `DUBLIN BUS  •  ROUTE <ROUTE>  •  <STOP NAME>` (default: Route H1, Stop 917 Admiral Park).
-   * Next 2 upcoming buses (Row 1 at Y: 196, Row 2 at Y: 250) featuring live countdown badges, destination station, scheduled/expected time, and real-time tracking status (`LIVE` / `SCHED`).
-3. **Section 3: Time, Weather & System Dashboard (Y: 308–480)**:
-   * Solid 4-pixel divider line at Y: 308 spanning the full 800px display width.
-   * Divided into 3 dedicated telemetry columns via vertical dividers at X: 275 and X: 545:
-     * **Column 1: Current Time & Date (X: 24–270)**: Massive 42px digital clock (`HH:MM`), day/date indicator, and web dashboard URL.
-     * **Column 2: Expected Weather (X: 295–540)**: Large temperature display (35px), rain probability percentage, and dynamic commuter advisory (`UMBRELLA ADVISED` vs `BALDOYLE & SUTTON`).
-     * **Column 3: Battery & System (X: 565–780)**: Battery percentage, visual multi-segment battery gauge, power source (`POWER: USB (DESK)` vs `POWER: LIPO BATTERY`), and refresh rate.
+#### Visual Hierarchy (2 Transit Sections + 1-Line Footer):
+1. **Section 1: DART Departures (Y: 0–220)**:
+   * Inverted header title bar (Y: 0–38): `DART  •  <STATION>  •  <DIRECTION>` (e.g. `DART • SUTTON • SOUTHBOUND`).
+   * Next 2 upcoming trains (Row 1 at Y: 46, Row 2 at Y: 136) featuring prominent inverted countdown badges (56px tall, `DUE` / `<min> MIN`), bold destination station (35px tall), expected departure time, and real-time status.
+   * Row divider line at Y: 133.
+2. **Section 2: Dublin Bus Departures (Y: 221–443)**:
+   * Section divider line at Y: 221.
+   * Inverted header title bar (Y: 223–261): `DUBLIN BUS  •  ROUTE <ROUTE>  •  <STOP NAME>` (default: Route H1, Stop 917 Admiral Park).
+   * Next 2 upcoming buses (Row 1 at Y: 269, Row 2 at Y: 359) featuring large countdown badges, bold destination station (35px tall), scheduled/expected departure time, and live status (`LIVE` / `SCHED`).
+   * Row divider line at Y: 356.
+3. **Footer: Single-Line Dashboard (Y: 444–480)**:
+   * Solid divider line at Y: 444 spanning the full 800px display width.
+   * Clean single-line layout (`TIME | WEATHER | BATTERY`) at Y: 455:
+     * **Time**: `TIME: <HH:MM>  (<DATE>)` (Left, X: 24).
+     * **Weather**: `WEATHER: <TEMP>°C  •  RAIN: <RAIN>%` with dynamic `[UMBRELLA]` badge if rain $\ge 40\%$ (Center, X: 295).
+     * **Battery**: `BATTERY: <PERCENT>%` with visual multi-segment fuel gauge icon (Right, X: 565).
 
 ---
 
