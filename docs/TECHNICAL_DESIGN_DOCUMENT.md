@@ -178,7 +178,9 @@ The graphics subsystem is implemented in clean C++ (`dart_canvas.hpp`) without d
 
 #### Visual Hierarchy (2 Transit Sections + 1-Line Footer):
 1. **Section 1: DART Departures (Y: 0–220)**:
-   * Inverted header title bar (Y: 0–38): `DART  •  <STATION>  •  <DIRECTION>` (e.g. `DART • SUTTON • SOUTHBOUND`).
+   * Inverted header title bar (Y: 0–38):
+     * Left ($X = 24$): `DART  •  <STATION>  •  <DIRECTION>` (e.g. `DART • SUTTON • SOUTHBOUND`).
+     * Right (right-aligned to $X = 776$): Current Time (`<HH:MM>`, e.g. `16:30`) in scale 3 white text.
    * Next 2 upcoming trains (Row 1 at Y: 59, Row 2 at Y: 123) featuring prominent inverted countdown badges (56px tall, `DUE` / `<min> MIN`), bold destination station (35px tall), expected departure time, and real-time status. Compact 8px gap between rows without artificial whitespace voids or horizontal divider lines.
    * **Empty State**: Centered 2-line message (`NO UPCOMING DART DEPARTURES` / `NO TRAINS SCHEDULED (NEXT 90 MIN)`) when no trains are operating in the schedule window.
 2. **Section 2: Dublin Bus Departures (Y: 221–443)**:
@@ -188,10 +190,9 @@ The graphics subsystem is implemented in clean C++ (`dart_canvas.hpp`) without d
    * **Empty State**: Centered 2-line notification (`NO UPCOMING BUS DEPARTURES` / `NO BUSES SCHEDULED (NEXT 90 MIN)`) when off-peak or no buses are due.
 3. **Footer: Single-Line Dashboard (Y: 444–480)**:
    * Solid divider line at Y: 444 spanning the full 800px display width.
-   * Clean single-line layout (`TIME | WEATHER | BATTERY`) at Y: 455:
-     * **Time**: `TIME: <HH:MM>  (<DATE>)` (Left, X: 24).
-     * **Weather**: `WEATHER: <TEMP>°C  •  RAIN: <RAIN>%` with dynamic `[UMBRELLA]` badge if rain $\ge 40\%$ (Center, X: 295).
-     * **Battery**: `BATTERY: <PERCENT>%` with visual multi-segment fuel gauge icon (Right, X: 565).
+   * Uncluttered 2-item layout (`WEATHER` and `BATTERY`) at Y: 455 with $> 125$px buffer:
+     * **Weather**: `WEATHER: <TEMP>°C  •  RAIN: <RAIN>%` with dynamic `[UMBRELLA]` badge if rain $\ge 40\%$ (Left, $X = 24$).
+     * **Battery**: `BATTERY: <PERCENT>%` with visual multi-segment fuel gauge icon (Right, right-aligned to $X = 776$).
 
 #### Horizontal Column Coordinate Grid (Zero-Overlap Guarantee across 800px Width):
 To eliminate text collisions between destination, expected time (`EXP: HH:MM`), and status (`ON TIME` / `LIVE` / `SCHED` / `DELAY`), departures use a right-aligned column grid:

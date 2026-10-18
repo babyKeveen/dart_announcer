@@ -495,6 +495,12 @@ def _render_commute(
     dart_title = f"DART  •  {st_name}  •  {dir_str}"
     draw.text((24, 7), dart_title, fill=1, font=f_title)
 
+    # Time (Header Right-Hand Side, right-aligned to X = 776)
+    clock_str = datetime.now().strftime("%H:%M")
+    clock_box = f_title.getbbox(clock_str)
+    clock_w = clock_box[2] - clock_box[0]
+    draw.text((776 - clock_w, 7), clock_str, fill=1, font=f_title)
+
     # Next 2 Trains (Row 1 at Y: 59, Row 2 at Y: 123)
     y_trains = [59, 123]
     if not result.departures:
@@ -588,44 +594,39 @@ def _render_commute(
             st_w = st_box[2] - st_box[0]
             draw.text((776 - st_w, ry + 26), st, fill=0, font=f_status)
 
-    # ================= FOOTER: SINGLE LINE FOR TIME | WEATHER | BATTERY =================
+    # ================= FOOTER: WEATHER & BATTERY =================
     # Divider Line at Y: 444
     draw.line([(0, 444), (WIDTH, 444)], fill=0, width=2)
 
-    # 1. Time (Left, X: 24)
-    clock_str = datetime.now().strftime("%H:%M")
-    date_str = datetime.now().strftime("%a %d %b").upper()
-    draw.text((24, 452), f"TIME: {clock_str}  ({date_str})", fill=0, font=f_footer)
-
-    # Separator 1
-    draw.text((275, 452), "|", fill=0, font=f_footer)
-
-    # 2. Weather (Center, X: 295)
+    # 1. Weather (Left, X: 24)
     temp_str = f"{result.temperature:.1f}°C" if result.temperature is not None else "--°C"
     rain_val = result.rain_chance if result.rain_chance is not None else -1
     rain_txt = f"RAIN: {rain_val}%" if rain_val >= 0 else "RAIN: --%"
     weather_full = f"WEATHER: {temp_str}  •  {rain_txt}"
-    draw.text((295, 452), weather_full, fill=0, font=f_footer)
+    draw.text((24, 452), weather_full, fill=0, font=f_footer)
 
     if rain_val >= 40:
         w_bbox = f_footer.getbbox(weather_full)
         ww = w_bbox[2] - w_bbox[0]
-        draw.rectangle([(295 + ww + 10, 450), (295 + ww + 96, 470)], fill=0)
-        draw.text((295 + ww + 16, 452), "UMBRELLA", fill=1, font=f_footer)
+        draw.rectangle([(24 + ww + 12, 450), (24 + ww + 96, 470)], fill=0)
+        draw.text((24 + ww + 18, 452), "UMBRELLA", fill=1, font=f_footer)
 
-    # Separator 2
-    draw.text((545, 452), "|", fill=0, font=f_footer)
-
-    # 3. Battery (Right, X: 565)
+    # 2. Battery (Right, right-aligned to X = 776)
     bat_pct = battery if battery is not None else 100
-    draw.text((565, 452), f"BATTERY: {bat_pct}%", fill=0, font=f_footer)
+    bat_txt = f"BATTERY: {bat_pct}%" if battery is not None else "BATTERY: --%"
+    bat_bbox = f_footer.getbbox(bat_txt)
+    bat_w = bat_bbox[2] - bat_bbox[0]
+    bat_total_w = bat_w + 10 + 37
+    bat_start_x = 776 - bat_total_w
+    draw.text((bat_start_x, 452), bat_txt, fill=0, font=f_footer)
 
-    # Visual battery gauge
-    bx, by, bw, bh = 736, 452, 34, 16
+    # Visual battery gauge (Ends at X = 776)
+    bx, by, bw, bh = 776 - 37, 452, 34, 16
     draw.rectangle([(bx, by), (bx + bw, by + bh)], outline=0, width=1)
     draw.rectangle([(bx + bw, by + 4), (bx + bw + 3, by + 12)], fill=0)
-    fill_w = max(2, min(26, int(26 * (bat_pct / 100.0))))
-    draw.rectangle([(bx + 4, by + 4), (bx + 4 + fill_w, by + bh - 4)], fill=0)
+    if battery is not None and bat_pct > 0:
+        fill_w = max(2, min(26, int(26 * (bat_pct / 100.0))))
+        draw.rectangle([(bx + 4, by + 4), (bx + 4 + fill_w, by + bh - 4)], fill=0)
 
     return img
 

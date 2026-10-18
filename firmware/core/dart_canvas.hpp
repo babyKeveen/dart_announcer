@@ -243,9 +243,9 @@ public:
     }
 
     // Multimodal Commuter Display Layout:
-    // Section 1 (Y: 0–220): DART (Next 2 Trains)
+    // Section 1 (Y: 0–220): DART (Next 2 Trains) + Time (Top-Right Header)
     // Section 2 (Y: 221–443): Dublin Bus (Next 2 Buses)
-    // Footer (Y: 444–480): Single line for Time | Weather | Battery
+    // Footer (Y: 444–480): Single line for Weather | Battery
     void render_commute_board(
         const BoardData& board,
         int battery_percent = -1,
@@ -265,6 +265,11 @@ public:
 
         std::string dart_title = "DART  •  " + dart_st + "  •  " + dart_dir;
         draw_string(24, 9, dart_title, false, 3);
+
+        // Current Time (Header Right-Hand Side, right-aligned to X = 776)
+        std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
+        int clock_w = get_string_width(clock, 3);
+        draw_string(776 - clock_w, 9, clock, false, 3);
 
         // Next 2 DART Departures
         if (board.departures.empty()) {
@@ -394,21 +399,11 @@ public:
             }
         }
 
-        // ================= FOOTER: SINGLE LINE FOR TIME | WEATHER | BATTERY =================
+        // ================= FOOTER: WEATHER & BATTERY =================
         // Divider Line at Y: 444
         draw_line(0, 444, WIDTH, 444, true);
 
-        // 1. Time (Left, X: 24)
-        std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
-        std::string d_str = board.server_date.empty() ? "" : board.server_date;
-        std::transform(d_str.begin(), d_str.end(), d_str.begin(), ::toupper);
-        std::string time_str = "TIME: " + clock + (d_str.empty() ? "" : ("  " + d_str));
-        draw_string(24, 455, time_str, true, 2);
-
-        // Separator 1
-        draw_string(275, 455, "|", true, 2);
-
-        // 2. Weather (Center, X: 295)
+        // 1. Weather (Left, X: 24)
         char w_buf[64];
         if (temp_c > -50.0f && rain_chance >= 0) {
             snprintf(w_buf, sizeof(w_buf), "WEATHER: %.1f°C  •  RAIN: %d%%", temp_c, rain_chance);
@@ -417,26 +412,28 @@ public:
         } else {
             strcpy(w_buf, "WEATHER: --°C");
         }
-        draw_string(295, 455, w_buf, true, 2);
+        draw_string(24, 455, w_buf, true, 2);
 
         if (rain_chance >= 40) {
             int ww = get_string_width(w_buf, 2);
-            fill_rect(295 + ww + 10, 452, 92, 20, true);
-            draw_string(295 + ww + 16, 455, "UMBRELLA", false, 2);
+            fill_rect(24 + ww + 12, 452, 92, 20, true);
+            draw_string(24 + ww + 18, 455, "UMBRELLA", false, 2);
         }
 
-        // Separator 2
-        draw_string(545, 455, "|", true, 2);
-
-        // 3. Battery (Right, X: 565)
+        // 2. Battery (Right, right-aligned to X = 776)
         std::string bat_s = "BATTERY: " + (battery_percent >= 0 ? (std::to_string(battery_percent) + "%") : "--%");
-        draw_string(565, 455, bat_s, true, 2);
+        int bat_text_w = get_string_width(bat_s, 2);
+        int bat_icon_w = 37; // 34px body + 3px terminal nub
+        int bat_total_w = bat_text_w + 10 + bat_icon_w;
+        int bat_start_x = 776 - bat_total_w;
 
-        // Battery Icon
-        int bat_icon_x = 736;
+        draw_string(bat_start_x, 455, bat_s, true, 2);
+
+        // Battery Icon (Ends at X = 776)
+        int bat_icon_x = 776 - bat_icon_w;
         int bat_icon_y = 453;
         draw_rect(bat_icon_x, bat_icon_y, 34, 16, true);
-        fill_rect(bat_icon_x + 34, bat_icon_y + 4, 3, 8, true);
+        fill_rect(bat_icon_x + 34, bat_icon_y + 4, 3, 8, true); // positive terminal nub
         if (battery_percent > 0) {
             int fw = std::min(26, std::max(2, (battery_percent * 26) / 100));
             fill_rect(bat_icon_x + 4, bat_icon_y + 4, fw, 8, true);
