@@ -497,7 +497,14 @@ def _render_commute(
     # Next 2 Trains (Row 1 at Y: 59, Row 2 at Y: 123)
     y_trains = [59, 123]
     if not result.departures:
-        draw.text((180, 115), "CONNECTING TO IRISH RAIL...", fill=0, font=f_dest_lg)
+        msg1 = "NO UPCOMING DART DEPARTURES"
+        msg2 = "NO TRAINS SCHEDULED (NEXT 90 MIN)"
+        bbox1 = f_dest_md.getbbox(msg1)
+        w1 = bbox1[2] - bbox1[0]
+        bbox2 = f_sub.getbbox(msg2)
+        w2 = bbox2[2] - bbox2[0]
+        draw.text(((WIDTH - w1) // 2, 98), msg1, fill=0, font=f_dest_md)
+        draw.text(((WIDTH - w2) // 2, 138), msg2, fill=0, font=f_sub)
     else:
         for i, d in enumerate(result.departures[:2]):
             ry = y_trains[i]
@@ -538,7 +545,14 @@ def _render_commute(
     # Next 2 Buses (Row 1 at Y: 282, Row 2 at Y: 346)
     y_buses = [282, 346]
     if not result.bus_departures:
-        draw.text((180, 338), "CONNECTING TO DUBLIN BUS...", fill=0, font=f_dest_lg)
+        msg1 = "NO UPCOMING BUS DEPARTURES"
+        msg2 = "NO BUSES SCHEDULED (NEXT 90 MIN)"
+        bbox1 = f_dest_md.getbbox(msg1)
+        w1 = bbox1[2] - bbox1[0]
+        bbox2 = f_sub.getbbox(msg2)
+        w2 = bbox2[2] - bbox2[0]
+        draw.text(((WIDTH - w1) // 2, 321), msg1, fill=0, font=f_dest_md)
+        draw.text(((WIDTH - w2) // 2, 361), msg2, fill=0, font=f_sub)
     else:
         for i, b in enumerate(result.bus_departures[:2]):
             ry = y_buses[i]

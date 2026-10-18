@@ -36,6 +36,8 @@ struct BoardData {
     std::vector<BusDeparture> bus_departures; // Dublin Bus departures
     bool success = false;
     std::string error_message;
+    bool bus_success = false;
+    std::string bus_error_message;
 };
 
 } // namespace dart

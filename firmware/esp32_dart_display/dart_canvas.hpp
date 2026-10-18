@@ -263,9 +263,14 @@ public:
         std::string dart_title = "DART  •  " + dart_st + "  •  " + dart_dir;
         draw_string(24, 9, dart_title, false, 3);
 
-        // Next 2 DART Departures (Row 1 at ry = 46, Row 2 at ry = 136)
+        // Next 2 DART Departures
         if (board.departures.empty()) {
-            draw_string(180, 115, "NO UPCOMING DART DEPARTURES", true, 4);
+            std::string msg1 = "NO UPCOMING DART DEPARTURES";
+            std::string msg2 = "NO TRAINS SCHEDULED (NEXT 90 MIN)";
+            int w1 = get_string_width(msg1, 3);
+            int w2 = get_string_width(msg2, 3);
+            draw_string((WIDTH - w1) / 2, 102, msg1, true, 3);
+            draw_string((WIDTH - w2) / 2, 134, msg2, true, 3);
         } else {
             size_t max_trains = std::min((size_t)2, board.departures.size());
             int y_trains[2] = {59, 123};
@@ -320,9 +325,14 @@ public:
         std::string bus_title = "DUBLIN BUS  •  ROUTE " + bus_rt + "  •  " + bus_st;
         draw_string(24, 232, bus_title, false, 3);
 
-        // Next 2 Bus Departures (Row 1 at ry = 269, Row 2 at ry = 359)
+        // Next 2 Bus Departures
         if (board.bus_departures.empty()) {
-            draw_string(180, 338, "CONNECTING TO DUBLIN BUS...", true, 4);
+            std::string msg1 = "NO UPCOMING BUS DEPARTURES";
+            std::string msg2 = "NO BUSES SCHEDULED (NEXT 90 MIN)";
+            int w1 = get_string_width(msg1, 3);
+            int w2 = get_string_width(msg2, 3);
+            draw_string((WIDTH - w1) / 2, 325, msg1, true, 3);
+            draw_string((WIDTH - w2) / 2, 357, msg2, true, 3);
         } else {
             size_t max_buses = std::min((size_t)2, board.bus_departures.size());
             int y_buses[2] = {282, 346};

@@ -534,32 +534,40 @@ void fetchWeather() {
 // ======================== DUBLIN BUS REAL-TIME =====================
 void fetchDublinBusDepartures() {
     if (WiFi.status() != WL_CONNECTED) {
+        g_last_board.bus_success = false;
+        g_last_board.bus_error_message = "Wi-Fi Disconnected";
         return;
     }
 
     WiFiClientSecure client;
     client.setInsecure(); // Disable SSL certificate verification for speed & minimal RAM usage
-    client.setTimeout(6000);
+    client.setTimeout(8000);
 
     HTTPClient https;
     String url = "https://bustimes.org/stops/" + g_bus_stop_id;
-    Serial.printf("\n[Bus API] Fetching Dublin Bus timetable: %s\n", url.c_str());
+    Serial.printf("\n[Bus API] Fetching Dublin Bus timetable: %s (Free Heap: %u)\n", url.c_str(), (unsigned int)ESP.getFreeHeap());
 
     if (https.begin(client, url)) {
         https.setUserAgent("Mozilla/5.0 (ESP32-S3 Commute Board)");
-        https.setTimeout(5000);
+        https.setTimeout(8000);
         int httpCode = https.GET();
         if (httpCode == HTTP_CODE_OK) {
             String payload = https.getString();
             Serial.printf("[Bus API] Received %d bytes HTML.\n", (int)payload.length());
             g_last_board.bus_departures = dart::Parser::parse_bus_html(payload.c_str(), g_bus_route.c_str(), g_last_board.query_time);
+            g_last_board.bus_success = true;
+            g_last_board.bus_error_message = "";
             Serial.printf("[Bus API] Successfully parsed %d departures for route %s\n",
                           (int)g_last_board.bus_departures.size(), g_bus_route.c_str());
         } else {
+            g_last_board.bus_success = false;
+            g_last_board.bus_error_message = "HTTP " + std::to_string(httpCode);
             Serial.printf("[Bus API] HTTP GET failed (code %d)\n", httpCode);
         }
         https.end();
     } else {
+        g_last_board.bus_success = false;
+        g_last_board.bus_error_message = "SSL Init Failed";
         Serial.println("[Bus API] Failed to initialize HTTPS connection to bustimes.org");
     }
 }
