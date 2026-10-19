@@ -267,6 +267,17 @@ The ESP32-S3 hosts an asynchronous HTTP server on port 80:
      * Transit status wrapped across 2 lines (`NORMAL SCHEDULED` / `SERVICE EXPECTED`).
      * Eliminates text truncation and right-edge display overflow.
 
+4. **Over-The-Air (OTA) Web Firmware Updates (`/update`)**:
+   * **Browser-Based Wirelessly Flashing:** Eliminates the need to ever connect a USB cable or use the Arduino IDE for sketch updates.
+   * **Endpoints:**
+     * `GET /update`: Dedicated dark-mode portal displaying flash health (total flash, sketch size, free app slot) with drag-and-drop file selector for `.bin` files and real-time upload progress bar (percentage, bytes transferred, transfer status).
+     * `POST /update`: Handles multipart upload streaming chunks into ESP32 flash via `<Update.h>`, validating MD5 checksum and setting the active boot partition upon success before triggering an automatic software reboot.
+   * **Dual Partition Boot Safety:** Uses standard ESP32 dual-app OTA scheme (`ota_0` and `ota_1`, 1.28MB each in `default.csv` / 1.92MB each in `min_spiffs.csv`). If an upload is aborted or corrupted, the bootloader remains pointed at the existing valid partition, making firmware flashing completely brick-proof.
+   * **Accessible in Both Modes:**
+     * **Desk / Test Mode:** Available 24/7 on `http://dart-display.local/update` (and linked directly from `/` and `/config`).
+     * **Battery Wall Frame Mode:** Holding the physical **BOOT** button for 2 seconds enters Setup Mode, enabling both the `DART-Frame-Setup` SoftAP hotspot (`http://192.168.4.1/update`) and home Wi-Fi station connectivity (`http://dart-display.local/update`).
+   * **Visual Status Feedback:** The onboard NeoPixel turns magenta during active OTA flashing, green on successful flash and verification, and red if an error occurs.
+
 ---
 
 ## 5. Build & Deployment Specifications

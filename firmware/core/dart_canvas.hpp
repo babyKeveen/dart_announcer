@@ -553,7 +553,7 @@ public:
 
         // 3. Footer
         draw_line(0, 436, WIDTH - 1, 436, true);
-        draw_string(24, 450, "SETUP PORTAL: HTTP://192.168.4.1  •  PORT 80", true, 2);
+        draw_string(24, 450, "SETUP: HTTP://192.168.4.1  •  OTA: /UPDATE", true, 2);
         draw_string(WIDTH - 220, 450, "WAVESHARE 7.5\" HAT", true, 2);
     }
 
