@@ -52,6 +52,7 @@
 #include "esp_ota_ops.h"
 #include <esp_wifi.h>
 #include <esp_sleep.h>
+#include <time.h>
 #include <vector>
 #include <algorithm>
 
@@ -594,9 +595,24 @@ void fetchDublinBusDepartures() {
     yield();
 }
 
+String getLocalTimeString(int* outHour = nullptr) {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo, 1500)) {
+        char buf[10];
+        snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+        if (outHour) *outHour = timeinfo.tm_hour;
+        return String(buf);
+    }
+    return "";
+}
+
 uint32_t calculateSleepSeconds(const std::string& query_time) {
-    if (query_time.length() >= 2) {
-        int hour = std::atoi(query_time.substr(0, 2).c_str());
+    int hour = -1;
+    getLocalTimeString(&hour);
+    if (hour < 0 && query_time.length() >= 2 && query_time != "--:--") {
+        hour = std::atoi(query_time.substr(0, 2).c_str());
+    }
+    if (hour >= 0) {
         if (g_schedule_enabled && (hour < g_schedule_start_hour || hour >= g_schedule_end_hour)) {
             return 1800; // 30 mins standby sleep during scheduled down hours
         }
@@ -1104,9 +1120,22 @@ String buildPreviewHtml() {
 
 void redrawCanvas() {
     g_canvas.clear(false);
-    int curHour = g_last_board.query_time.length() >= 2 ? std::atoi(g_last_board.query_time.substr(0, 2).c_str()) : 12;
+
+    int curHour = -1;
+    String ntpTime = getLocalTimeString(&curHour);
+    if (curHour >= 0) {
+        Serial.printf("[Clock] True local time: %s (hour %d)\n", ntpTime.c_str(), curHour);
+        if (g_last_board.query_time.empty() || g_last_board.query_time == "--:--") {
+            g_last_board.query_time = ntpTime.c_str();
+        }
+    } else {
+        curHour = (g_last_board.query_time.length() >= 2 && g_last_board.query_time != "--:--") ?
+            std::atoi(g_last_board.query_time.substr(0, 2).c_str()) : 12;
+        Serial.printf("[Clock] NTP not ready, using query_time: %s (hour %d)\n", g_last_board.query_time.c_str(), curHour);
+    }
+
     if (g_schedule_enabled && (curHour < g_schedule_start_hour || curHour >= g_schedule_end_hour)) {
-        Serial.println("[Schedule] Down period active: Rendering Standby Clock & Tomorrow's Weather.");
+        Serial.printf("[Schedule] Standby down period active (%02d:xx): Rendering Standby Clock & Tomorrow's Weather.\n", curHour);
         int rain = (g_rain_chance >= 0) ? g_rain_chance : 50;
         int tmax = (g_temperature > -50.0f) ? (int)(g_temperature + 2) : 15;
         int tmin = (g_temperature > -50.0f) ? (int)(g_temperature - 3) : 9;
@@ -1149,11 +1178,33 @@ void fetchAndRender() {
         g_last_board = dart::Parser::parse_station_xml(xmlResponse, g_direction.c_str());
         Serial.printf("[Data] Parsed %s: %d trains at %s\n",
             g_last_board.station_name.c_str(), (int)g_last_board.departures.size(), g_last_board.query_time.c_str());
-    } else if (g_last_board.station_name.empty()) {
+    } else {
         g_last_board.success = false;
-        g_last_board.station_name = g_station_code.c_str();
-        g_last_board.query_time = "--:--";
         g_last_board.error_message = "Irish Rail API Offline";
+    }
+
+    // Resolve station name if Irish Rail returned empty station name (e.g. night hours with no trains)
+    if (g_last_board.station_name.empty() || g_last_board.station_name == g_station_code.c_str()) {
+        for (const auto& s : g_stations) {
+            if (s.code.equalsIgnoreCase(g_station_code)) {
+                g_last_board.station_name = s.name.c_str();
+                break;
+            }
+        }
+        if (g_last_board.station_name.empty()) {
+            g_last_board.station_name = g_station_code.c_str();
+        }
+    }
+
+    // Resolve time via NTP if Irish Rail returned no trains
+    int ntpHour = -1;
+    String ntpTime = getLocalTimeString(&ntpHour);
+    if (g_last_board.query_time.empty() || g_last_board.query_time == "--:--") {
+        if (ntpTime.length() > 0) {
+            g_last_board.query_time = ntpTime.c_str();
+        } else {
+            g_last_board.query_time = "--:--";
+        }
     }
 
     // Fetch Dublin Bus departures for configured stop
@@ -1383,6 +1434,12 @@ void setup() {
         MDNS.addService("http", "tcp", 80);
         Serial.println("[mDNS] Responder active: http://dart-display.local/");
     }
+
+    // Synchronize local time via SNTP for accurate schedule switching
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    setenv("TZ", "GMT0IST,M3.5.0/1,M10.5.0", 1);
+    tzset();
+    Serial.println("[NTP] Time synchronization initialized (Europe/Dublin).");
 
     // 5. Initial Fetch and Render (load dynamic DART stations first for coordinates)
     fetchDartStationsList();
