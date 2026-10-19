@@ -49,6 +49,7 @@
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <Update.h>
+#include "esp_ota_ops.h"
 #include <esp_wifi.h>
 #include <esp_sleep.h>
 #include <vector>
@@ -944,8 +945,33 @@ String buildOtaHtml() {
     html += String(sketchSize / 1024) + " KB</b></div>\n";
     html += "    <div>Free App Slot: <b>" + String(freeSpace / 1024) + " KB</b></div>\n";
     html += "    <div>Total Flash: <b>" + String(flashSize / (1024 * 1024)) + " MB</b></div>\n";
-    html += R"rawliteral(  </div>
 
+    const esp_partition_t* runningPart = esp_ota_get_running_partition();
+    const esp_partition_t* nextPart = esp_ota_get_next_update_partition(NULL);
+    html += "    <div>Active Partition: <b>" + String(runningPart ? runningPart->label : "Unknown") + "</b></div>\n";
+    if (nextPart) {
+        html += "    <div>OTA Target Slot: <b>" + String(nextPart->label) + " (" + String(nextPart->size / 1024) + " KB)</b></div>\n";
+    } else {
+        html += "    <div>OTA Target Slot: <b style=\"color:#ef4444;\">None (Single Partition)</b></div>\n";
+    }
+    html += R"rawliteral(  </div>
+)rawliteral";
+
+    if (!nextPart) {
+        html += R"rawliteral(
+  <div style="background:rgba(239,68,68,0.18); border:1px solid #ef4444; border-radius:8px; padding:16px; margin-bottom:20px; font-size:13px; color:#fca5a5; line-height:1.6;">
+    <div style="font-weight:bold; font-size:15px; margin-bottom:6px; color:#f87171;">⚠️ Partition Table Has No OTA Target</div>
+    Your board is currently running a single-partition <i>&ldquo;No OTA&rdquo;</i> layout (e.g. TinyUF2 No OTA). In this mode, the ESP32 does not have a secondary flash slot to write updates to.<br><br>
+    <b>To enable wireless OTA updates:</b><br>
+    1. In <b>Arduino IDE</b>, open <b>Tools ➔ Partition Scheme</b>.<br>
+    2. Change from <i>TinyUF2 No OTA</i> to <b>&ldquo;Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)&rdquo;</b> (or <b>&ldquo;Default 4MB with spiffs&rdquo;</b>).<br>
+    3. Plug in the USB cable and click <b>Upload</b> once.<br><br>
+    <i>This re-partitions the flash chip with dual OTA slots (ota_0 &amp; ota_1), enabling wireless browser updates forever!</i>
+  </div>
+)rawliteral";
+    }
+
+    html += R"rawliteral(
   <div class="drop-zone" id="dropZone" onclick="document.getElementById('firmwareFile').click()">
     <svg width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color:#94a3b8; margin:0 auto; display:block;"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
     <div id="dropText" style="font-weight:600; margin-top:8px;">Click to browse or drop .bin file here</div>
@@ -1073,10 +1099,15 @@ function startUpload() {
 
 void handleOtaPost() {
     if (Update.hasError()) {
-        Serial.printf("[OTA] Update failed: %s\n", Update.errorString());
+        const esp_partition_t* nextPart = esp_ota_get_next_update_partition(NULL);
+        String err = Update.errorString();
+        if (!nextPart) {
+            err = "Partition table on flash has no OTA partition! In Arduino IDE, change Tools -> Partition Scheme to 'Minimal SPIFFS (1.9MB APP with OTA)' or 'Default 4MB with spiffs' and re-flash via USB once.";
+        }
+        Serial.printf("[OTA] Update failed: %s\n", err.c_str());
         setStatusLed(32, 0, 0); // Red: Failed
         webServer.sendHeader("Connection", "close");
-        webServer.send(500, "text/plain", String("Update Failed: ") + Update.errorString());
+        webServer.send(500, "text/plain", err);
     } else {
         Serial.println("\n[OTA] Update succeeded! Rebooting ESP32 in 1s...");
         setStatusLed(0, 32, 0); // Green: Success
@@ -1472,6 +1503,12 @@ void setup() {
     Serial.println("\n=======================================================");
     Serial.println("  🚆 DART Announce - Adafruit Feather ESP32-S3 Display");
     Serial.println("=======================================================");
+
+    const esp_partition_t* runPart = esp_ota_get_running_partition();
+    const esp_partition_t* nextPart = esp_ota_get_next_update_partition(NULL);
+    Serial.printf("[OTA] Active Partition: %s, Next OTA Target: %s\n",
+        runPart ? runPart->label : "Unknown",
+        nextPart ? nextPart->label : "NONE (Board flashed with 'No OTA' partition scheme!)");
 
     pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
 
