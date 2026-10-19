@@ -260,6 +260,13 @@ The ESP32-S3 hosts an asynchronous HTTP server on port 80:
    * **LiPo Curve Approximation:** $3.30\text{V} = 0\%$, $4.15\text{V} = 100\%$.
    * **Critical Low-Battery Cutoff:** If $V_{\text{BAT}} < 3.25\text{V}$, the display renders a `BATTERY CRITICALLY LOW - PLEASE RECHARGE VIA USB-C` warning and halts execution in 12-hour deep sleep to protect the LiPo cell from permanent over-discharge.
 
+3. **Night Standby Screen Layout (`render_clock_weather_screen`)**:
+   * **Left Column (X: 0–400):** Big digital clock (scale 6), standby mode subtitle, resume schedule box (auto-sized to text width), and low-power sleep status.
+   * **Right Column (X: 400–800):** Tomorrow's commute weather banner, temperature range, rain probability badge, and multi-line commuter advice:
+     * Weather preparation advice wrapped across 2 lines (`CLEAR MORNING COMMUTE` / `NO UMBRELLA NEEDED` or `HEAVY RAIN EXPECTED` / `BRING AN UMBRELLA`).
+     * Transit status wrapped across 2 lines (`NORMAL SCHEDULED` / `SERVICE EXPECTED`).
+     * Eliminates text truncation and right-edge display overflow.
+
 ---
 
 ## 5. Build & Deployment Specifications

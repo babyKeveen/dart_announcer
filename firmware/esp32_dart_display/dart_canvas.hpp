@@ -455,10 +455,11 @@ public:
 
         // 1. Header (Black banner with white text)
         fill_rect(0, 0, WIDTH, 66, true);
-        std::string title = station_name + " STANDBY";
+        std::string title = "DART • " + (station_name.empty() ? "SUTTON" : station_name) + " STANDBY";
         std::transform(title.begin(), title.end(), title.begin(), ::toupper);
-        title = "DART • " + title;
-        draw_string(24, 18, title, false, 4);
+        int title_scale = (title.length() <= 20) ? 4 : 3;
+        int title_y = (title_scale == 4) ? 18 : 23;
+        draw_string(24, title_y, title, false, title_scale);
 
         if (battery_percent >= 0) {
             draw_battery(WIDTH - 70, 24, battery_percent, false, 2);
@@ -479,8 +480,9 @@ public:
         // Schedule status note
         char sched_buf[48];
         snprintf(sched_buf, sizeof(sched_buf), "RESUMES %02d:00 AM", resume_hour);
-        draw_rect(44, 250, 260, 40, true);
-        draw_string(60, 260, sched_buf, true, 3);
+        int sb_w = get_string_width(sched_buf, 3);
+        draw_rect(44, 250, sb_w + 24, 40, true);
+        draw_string(56, 260, sched_buf, true, 3);
 
         draw_string(44, 320, "LOW POWER DEEP SLEEP MODE", true, 2);
 
@@ -508,13 +510,20 @@ public:
             draw_string(444, 238, rain_buf, true, 3);
         }
 
-        // Commuter advice
+        // Commuter advice (multi-line layout to comfortably fit within 340px right column)
         if (rain_chance >= 40) {
-            draw_string(440, 300, "BRING UMBRELLA - HEAVY RAIN", true, 2);
+            draw_string(440, 292, "HEAVY RAIN EXPECTED", true, 2);
+            draw_string(440, 316, "BRING AN UMBRELLA", true, 2);
+        } else if (rain_chance >= 20) {
+            draw_string(440, 292, "LIGHT RAIN SHOWERS", true, 2);
+            draw_string(440, 316, "POSSIBLE DURING COMMUTE", true, 2);
         } else {
-            draw_string(440, 300, "CLEAR COMMUTE - NO UMBRELLA NEEDED", true, 2);
+            draw_string(440, 292, "CLEAR MORNING COMMUTE", true, 2);
+            draw_string(440, 316, "NO UMBRELLA NEEDED", true, 2);
         }
-        draw_string(440, 335, "NORMAL SCHEDULED SERVICE EXPECTED", true, 2);
+
+        draw_string(440, 352, "NORMAL SCHEDULED", true, 2);
+        draw_string(440, 376, "SERVICE EXPECTED", true, 2);
 
         // 3. Footer Bar
         draw_line(0, 436, WIDTH - 1, 436, true);
