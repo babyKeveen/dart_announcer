@@ -238,12 +238,27 @@ The ESP32-S3 hosts an asynchronous HTTP server on port 80:
 
 ### 4.4 Power Management & Battery Telemetry
 
-1. **MAX17048 I2C Fuel Gauge (Address `0x36`)**:
-   * Reads cell voltage from register `0x02` ($V_{\text{CELL}} = \text{raw} \times 78.125\mu\text{V}$).
-   * Reads state of charge (SOC) from register `0x04`.
-   * When running over USB without a LiPo battery attached, the I2C query fails gracefully and defaults to `5.00V (100% USB)`.
-2. **Night Standby Clock Mode**:
-   * Between configured hours (default: 19:00 to 06:00), the display automatically replaces train departure queries with a minimalist low-power standby clock, tomorrow's weather forecast, and wake-up countdown.
+1. **Ultra-Low-Power Deep Sleep Architecture (`prepareForDeepSleep`)**:
+   * **Root Cause of 24h Drain:** A desk prototyping override (`g_test_mode = true`) previously prevented the ESP32 from entering deep sleep, forcing the Wi-Fi radio and HTTP preview server to run 24/7 (~110mA continuous drain $\approx$ 24 hours on a 2500mAh cell).
+   * **Battery Wall Frame Mode:** Default operating mode. The ESP32 wakes, connects to Wi-Fi, fetches DART and bus departures, renders to the Waveshare e-paper, isolates all peripherals, and enters ESP32-S3 deep sleep ($< 30\mu\text{A}$ standby current).
+   * **Dynamic Commute Refresh Scheduling:**
+     * Commute Peak (06:00–10:00 & 16:00–20:00): Refresh every 90s.
+     * Off-Peak Daytime (10:00–16:00): Refresh every 300s (5 minutes).
+     * Night Standby (20:00–06:00): Refresh every 1800s (30 minutes).
+     * Expected Battery Life on 2500mAh LiPo: **25 to 30 days (approx. 1 month)**.
+   * **Peripheral Power Rail Isolation:**
+     * `PIN_EPD_PWR` (GPIO 13): Drives the Waveshare HAT Rev 2.3 MOSFET power switch. Driven `LOW` before sleep to cut 3.3V rail to the HAT, level shifters, and boost circuit.
+     * Onboard NeoPixel: `setStatusLed(0,0,0)` and `NEOPIXEL_POWER` turned off.
+     * I2C Bus: `PIN_I2C_POWER` driven `LOW`.
+     * SPI Bus: Released and pins isolated to eliminate parasitic leakage.
+     * Radios: `WiFi.disconnect()`, `WiFi.mode(WIFI_OFF)`, `btStop()`, and `esp_wifi_stop()`.
+     * Manual Wake-up: `esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BOOT_BTN, 0)` enables immediate refresh on pressing the BOOT button.
+
+2. **Battery Telemetry & Fallback Voltage Divider**:
+   * **Primary:** Reads MAX17048 I2C fuel gauge (Address `0x36`) when present.
+   * **Analog Fallback:** Reads Adafruit Feather ESP32-S3 onboard 200k/200k voltage divider on `PIN_VBAT` (GPIO 1 / A13) using calibrated `analogReadMilliVolts(PIN_VBAT) * 2`.
+   * **LiPo Curve Approximation:** $3.30\text{V} = 0\%$, $4.15\text{V} = 100\%$.
+   * **Critical Low-Battery Cutoff:** If $V_{\text{BAT}} < 3.25\text{V}$, the display renders a `BATTERY CRITICALLY LOW - PLEASE RECHARGE VIA USB-C` warning and halts execution in 12-hour deep sleep to protect the LiPo cell from permanent over-discharge.
 
 ---
 

@@ -48,6 +48,8 @@
 #include <Preferences.h>
 #include <DNSServer.h>
 #include <WebServer.h>
+#include <esp_wifi.h>
+#include <esp_sleep.h>
 #include <vector>
 #include <algorithm>
 
@@ -92,12 +94,9 @@ String g_bus_route     = "H1";
 String g_bus_stop_id   = "8240DB000917";
 String g_bus_stop_name = "Stop 917 (Admiral Park)";
 
-// ================== STANDALONE PREVIEW MODE =====================
-// Set to true to test the ESP32 without a physical screen or Raspberry Pi:
-//   1. Prints exact ASCII e-paper art directly to Serial Monitor.
-//   2. Hosts a live Web Server at http://<ESP32-IP>/ with a pixel-perfect 250x122 display preview!
-//   3. Stays awake over USB without resetting connection.
-bool   g_test_mode = true;
+// Set to false for Battery Wall Frame Mode (default: ultra-low power deep sleep).
+// Set to true in /config web portal for Desk / Test Mode (stays awake with live web preview).
+bool   g_test_mode = false;
 uint8_t g_bmp_buffer[48062];
 size_t g_bmp_size = 0;
 dart::BoardData g_last_board;
@@ -467,10 +466,20 @@ void readBatteryStatus() {
             }
         }
     } else {
-        // Fallback: USB powered without LiPo battery
-        g_battery_is_lipo = false;
-        g_battery_voltage = 5.0f;
-        g_battery_percent = 100;
+        // Fallback: Read onboard 2:1 voltage divider on Adafruit Feather ESP32-S3 (GPIO 1 / A13)
+        pinMode(PIN_VBAT, INPUT);
+        uint32_t raw_mv = analogReadMilliVolts(PIN_VBAT);
+        float v = (raw_mv * 2.0f) / 1000.0f;
+        if (v > 2.8f && v < 4.5f) {
+            g_battery_voltage = v;
+            g_battery_is_lipo = true;
+            // Linear approximation for 3.7V LiPo: 3.30V (0%) to 4.15V (100%)
+            g_battery_percent = constrain((int)((v - 3.30f) / (4.15f - 3.30f) * 100.0f), 0, 100);
+        } else {
+            g_battery_is_lipo = false;
+            g_battery_voltage = 5.0f;
+            g_battery_percent = 100;
+        }
     }
 }
 
@@ -613,7 +622,7 @@ void loadConfig() {
     g_schedule_enabled    = prefs.getBool("sched_en", true);
     g_schedule_start_hour = prefs.getInt("sched_start", 6);
     g_schedule_end_hour   = prefs.getInt("sched_end", 19);
-    g_test_mode           = prefs.getBool("test_mode", true); // Default to test mode for prototyping
+    g_test_mode           = prefs.getBool("test_mode", false); // Default to Battery Wall Frame (Deep Sleep)
     g_bus_route           = prefs.getString("bus_rt", "H1");
     g_bus_stop_id         = prefs.getString("bus_stop", "8240DB000917");
     g_bus_stop_name       = prefs.getString("bus_name", "Stop 917 (Admiral Park)");
@@ -1142,6 +1151,53 @@ void setupPreviewServer() {
     webServer.begin();
 }
 
+// ======================== POWER & DEEP SLEEP MANAGEMENT ========================
+void prepareForDeepSleep(uint32_t sleepSeconds) {
+    Serial.printf("\n[Power] Preparing for deep sleep (%u seconds)...\n", sleepSeconds);
+
+    // 1. Put e-paper display controller into deep sleep
+    epdSleep();
+
+    // 2. Cut power to Waveshare HAT Rev 2.3 MOSFET power switch (GPIO 13)
+    digitalWrite(PIN_EPD_PWR, LOW);
+    pinMode(PIN_EPD_PWR, INPUT);
+
+    // 3. Isolate SPI and display control pins to prevent parasitic leakage
+    SPI.end();
+    pinMode(PIN_EPD_CS, INPUT_PULLUP);
+    pinMode(PIN_EPD_DC, INPUT_PULLDOWN);
+    pinMode(PIN_EPD_RST, INPUT_PULLDOWN);
+    pinMode(PIN_EPD_BUSY, INPUT_PULLDOWN);
+
+    // 4. Turn off onboard NeoPixel LED & cut power
+    setStatusLed(0, 0, 0);
+#ifdef NEOPIXEL_POWER
+    pinMode(NEOPIXEL_POWER, OUTPUT);
+    digitalWrite(NEOPIXEL_POWER, !NEOPIXEL_POWER_ON);
+#endif
+
+    // 5. Cut I2C bus power
+    digitalWrite(PIN_I2C_POWER, LOW);
+    pinMode(PIN_I2C_POWER, INPUT);
+
+    // 6. Completely power down Wi-Fi and Bluetooth radios
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    btStop();
+    esp_wifi_stop();
+
+    // 7. Flush serial output before sleep
+    Serial.println("[Power] Peripherals isolated. Entering ESP32-S3 deep sleep.");
+    Serial.flush();
+
+    // 8. Configure wakeups: Timer + BOOT Button (GPIO 0)
+    esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BOOT_BTN, 0); // Wake immediately on BOOT button press (LOW)
+
+    // 9. Enter deep sleep
+    esp_deep_sleep_start();
+}
+
 // ======================== MAIN EXECUTION ========================
 void setup() {
     Serial.begin(115200);
@@ -1167,14 +1223,27 @@ void setup() {
 
     // 1. Load saved configuration from NVS
     loadConfig();
-    g_test_mode = true; // Always stay awake in desk prototyping mode over USB
     Serial.printf("[Config] SSID: '%s', Station: '%s', Dir: '%s', TestMode: %d\n",
         g_wifi_ssid.c_str(), g_station_code.c_str(), g_direction.c_str(), g_test_mode ? 1 : 0);
 
-    // 2. Measure Battery (never sleep in test mode)
+    // 2. Measure Battery
     float vbat = readBatteryVoltage();
     int batPct = calculateBatteryPercentage(vbat);
-    Serial.printf("[Battery] %.2fV (%d%%)\n", vbat, batPct);
+    Serial.printf("[Battery] %.2fV (%d%%, LiPo: %d)\n", vbat, batPct, g_battery_is_lipo ? 1 : 0);
+
+    // Low battery protection: prevent LiPo over-discharge damage (< 3.25V)
+    if (g_battery_is_lipo && vbat < 3.25f && vbat > 2.0f) {
+        Serial.printf("[CRITICAL] Battery voltage %.2fV is critically low! Halting to protect LiPo.\n", vbat);
+        g_canvas.clear(false);
+        std::string msg1 = "BATTERY CRITICALLY LOW";
+        std::string msg2 = "PLEASE RECHARGE VIA USB-C";
+        int w1 = g_canvas.get_string_width(msg1, 3);
+        int w2 = g_canvas.get_string_width(msg2, 3);
+        g_canvas.draw_string((dart::Canvas::WIDTH - w1) / 2, 220, msg1, true, 3);
+        g_canvas.draw_string((dart::Canvas::WIDTH - w2) / 2, 255, msg2, true, 3);
+        updatePhysicalDisplay(g_canvas.get_buffer());
+        prepareForDeepSleep(43200); // Sleep 12 hours
+    }
 
     // 3. Check for manual setup button trigger (holding BOOT button for >2 seconds)
     if (digitalRead(PIN_BOOT_BTN) == LOW) {
@@ -1204,11 +1273,16 @@ void setup() {
         delay(250);
     }
 
-    // If Wi-Fi fails to connect after 15 seconds, trigger Captive Portal!
+    // If Wi-Fi fails to connect after 15 seconds:
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("\n[ERROR] Failed to connect to saved Wi-Fi network.");
-        Serial.println("[Fallback] Starting Captive Portal for Wi-Fi reconfiguration...");
-        startCaptivePortal();
+        if (g_test_mode || g_wifi_ssid.length() == 0) {
+            Serial.println("[Fallback] Starting Captive Portal for Wi-Fi reconfiguration...");
+            startCaptivePortal();
+        } else {
+            Serial.println("[Battery Mode] Temporary Wi-Fi failure. Entering 2-minute sleep before retry.");
+            prepareForDeepSleep(120);
+        }
     }
 
     setStatusLed(0, 32, 0); // Green: connected and running!
@@ -1230,19 +1304,13 @@ void setup() {
         Serial.println("\n=================================================================");
         Serial.println("🎉 STANDALONE PREVIEW SERVER ACTIVE ON ESP32!");
         Serial.printf("👉 Open http://dart-display.local/ (or http://%s/) in your browser!\n", WiFi.localIP().toString().c_str());
-        Serial.println("Auto-refreshes every 60 seconds over Wi-Fi (no deep sleep).");
+        Serial.println("Auto-refreshes every 60 seconds over Wi-Fi (Desk / Test Mode).");
+        Serial.println("To switch to Battery Deep Sleep Mode, change setting in http://dart-display.local/config");
         Serial.println("=================================================================\n");
         setupPreviewServer();
     } else {
-        // Battery Wall Frame Mode: shut down Wi-Fi immediately to save power
-        WiFi.disconnect(true);
-        WiFi.mode(WIFI_OFF);
-        Serial.println("Wi-Fi radio powered off.");
-
         uint32_t sleepSeconds = calculateSleepSeconds(g_last_board.query_time);
-        Serial.printf("Entering deep sleep for %u seconds...\n", sleepSeconds);
-        esp_sleep_enable_timer_wakeup(sleepSeconds * 1000000ULL);
-        esp_deep_sleep_start();
+        prepareForDeepSleep(sleepSeconds);
     }
 }
 
