@@ -124,6 +124,7 @@ def screen_png(
         mode=mode,
         is_active=settings.is_active_hours(),
         resume_hour=settings.schedule_start_hour,
+        end_hour=settings.schedule_end_hour,
         color=color,
     )
     return Response(content=png_bytes, media_type="image/png")
@@ -147,6 +148,7 @@ def screen_bmp(
         mode=mode,
         is_active=settings.is_active_hours(),
         resume_hour=settings.schedule_start_hour,
+        end_hour=settings.schedule_end_hour,
     )
     return Response(content=bmp_bytes, media_type="image/bmp")
 
@@ -171,6 +173,7 @@ def screen_bin(
         mode=mode,
         is_active=settings.is_active_hours(),
         resume_hour=settings.schedule_start_hour,
+        end_hour=settings.schedule_end_hour,
     )
     return Response(
         content=raw_bytes,
@@ -720,7 +723,7 @@ def _preview_plain(result, heading: str, invert: bool = False) -> str:
 </html>"""
 
 
-def _preview_clock_weather(result, heading: str, invert: bool = False, resume_hour: int = 6) -> str:
+def _preview_clock_weather(result, heading: str, invert: bool = False, resume_hour: int = 6, end_hour: int = 21) -> str:
     bg_color = "#000" if invert else "#fff"
     text_color = "#fff" if invert else "#000"
     border_color = "#334155" if invert else "#0f172a"
@@ -859,7 +862,7 @@ def _preview_clock_weather(result, heading: str, invert: bool = False, resume_ho
       <div class="huge-date">{date_str}</div>
       <div class="sched-box">
         <div class="sched-title">Display Schedule Status</div>
-        <div><span style="color: {accent_green};">&bull;</span> Active Commute Window: {resume_hour:02d}:00 &ndash; 19:00</div>
+        <div><span style="color: {accent_green};">&bull;</span> Active Commute Window: {resume_hour:02d}:00 &ndash; {end_hour:02d}:00</div>
         <div><span style="color: {accent_green};">&bull;</span> Current Mode: Down Period (Night Standby)</div>
         <div><span style="color: {accent_green};">&bull;</span> Station: {escape(result.station_name)} ({result.station_code})</div>
       </div>
@@ -903,7 +906,13 @@ def preview(
 
     req_mode = (mode or "auto").strip().lower()
     if req_mode == "clock" or (req_mode == "auto" and not is_active):
-        html = _preview_clock_weather(result, heading, invert=is_invert, resume_hour=settings.schedule_start_hour)
+        html = _preview_clock_weather(
+            result,
+            heading,
+            invert=is_invert,
+            resume_hour=settings.schedule_start_hour,
+            end_hour=settings.schedule_end_hour,
+        )
         return HTMLResponse(content=html)
 
     if active_style in ("reverse", "inverted", "dark"):

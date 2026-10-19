@@ -242,9 +242,8 @@ The ESP32-S3 hosts an asynchronous HTTP server on port 80:
    * **Root Cause of 24h Drain:** A desk prototyping override (`g_test_mode = true`) previously prevented the ESP32 from entering deep sleep, forcing the Wi-Fi radio and HTTP preview server to run 24/7 (~110mA continuous drain $\approx$ 24 hours on a 2500mAh cell).
    * **Battery Wall Frame Mode:** Default operating mode. The ESP32 wakes, connects to Wi-Fi, fetches DART and bus departures, renders to the Waveshare e-paper, isolates all peripherals, and enters ESP32-S3 deep sleep ($< 30\mu\text{A}$ standby current).
    * **Dynamic Commute Refresh Scheduling:**
-     * Commute Peak (06:00–10:00 & 16:00–20:00): Refresh every 90s.
-     * Off-Peak Daytime (10:00–16:00): Refresh every 300s (5 minutes).
-     * Night Standby (20:00–06:00): Refresh every 1800s (30 minutes).
+     * Commute Active Departures (06:00–21:00): Live DART and Dublin Bus departures (refresh every 90s during peak commute, 300s off-peak).
+     * Night Standby (21:00–06:00): Low-power night standby clock & tomorrow's Open-Meteo weather forecast (refreshes every 1800s / 30 minutes).
      * Expected Battery Life on 2500mAh LiPo: **25 to 30 days (approx. 1 month)**.
    * **Peripheral Power Rail Isolation:**
      * `PIN_EPD_PWR` (GPIO 13): Drives the Waveshare HAT Rev 2.3 MOSFET power switch. Driven `LOW` before sleep to cut 3.3V rail to the HAT, level shifters, and boost circuit.

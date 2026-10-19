@@ -185,7 +185,7 @@ def test_scheduler_web_config_api(monkeypatch, tmp_path):
     data = response.json()
     assert data["schedule_enabled"] is True
     assert data["schedule_start_hour"] == 6
-    assert data["schedule_end_hour"] == 19
+    assert data["schedule_end_hour"] == 21
     assert "is_active_hours" in data
 
     # Test POST /api/config modifies schedule

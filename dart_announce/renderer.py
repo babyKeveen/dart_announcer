@@ -639,6 +639,7 @@ def _render_clock_weather(
     battery: int | None = None,
     invert: bool = False,
     resume_hour: int = 6,
+    end_hour: int = 21,
 ) -> Image.Image:
     bg_color = 0 if invert else 1
     fg_color = 1 if invert else 0
@@ -687,7 +688,7 @@ def _render_clock_weather(
     # Mini header tab
     draw.rectangle([(28, 245), (375, 275)], fill=fg_color)
     draw.text((38, 252), "ACTIVE SCHEDULE STATUS", fill=bg_color, font=f_sub)
-    draw.text((38, 288), f"• Commute window: {resume_hour:02d}:00 – 19:00", fill=fg_color, font=f_body)
+    draw.text((38, 288), f"• Commute window: {resume_hour:02d}:00 – {end_hour:02d}:00", fill=fg_color, font=f_body)
     draw.text((38, 318), "• Status: Down Period (Night Mode)", fill=fg_color, font=f_body)
     draw.text((38, 348), "• Refresh: Low-power battery conservation", fill=fg_color, font=f_body)
     draw.text((38, 378), f"• Monitored Station: {result.station_name} ({result.station_code})", fill=fg_color, font=f_body)
@@ -913,6 +914,7 @@ def render_screen_image(
     mode: str = "auto",
     is_active: bool = True,
     resume_hour: int = 6,
+    end_hour: int = 21,
     color: bool = False,
 ) -> Image.Image:
     """Render the departure board or down-period clock with tomorrow's weather onto 800x480 image (monochrome or RGB if color=True)."""
@@ -924,7 +926,7 @@ def render_screen_image(
 
     # If clock mode forced or in down period under auto mode
     if mode == "clock" or (mode == "auto" and not is_active):
-        return _render_clock_weather(result, battery=battery, invert=is_reverse, resume_hour=resume_hour)
+        return _render_clock_weather(result, battery=battery, invert=is_reverse, resume_hour=resume_hour, end_hour=end_hour)
 
     if is_reverse:
         return _render_reverse(result, direction=direction, battery=battery)
@@ -945,6 +947,7 @@ def render_screen_png(
     mode: str = "auto",
     is_active: bool = True,
     resume_hour: int = 6,
+    end_hour: int = 21,
     color: bool = False,
 ) -> bytes:
     """Return PNG bytes of the 800x480 departure board or clock in chosen style."""
@@ -956,6 +959,7 @@ def render_screen_png(
         mode=mode,
         is_active=is_active,
         resume_hour=resume_hour,
+        end_hour=end_hour,
         color=color,
     )
     buf = io.BytesIO()
@@ -971,6 +975,7 @@ def render_screen_bmp(
     mode: str = "auto",
     is_active: bool = True,
     resume_hour: int = 6,
+    end_hour: int = 21,
 ) -> bytes:
     """Return 1-bit Windows BMP bytes of the 800x480 departure board or clock in chosen style."""
     img = render_screen_image(
@@ -981,6 +986,7 @@ def render_screen_bmp(
         mode=mode,
         is_active=is_active,
         resume_hour=resume_hour,
+        end_hour=end_hour,
     )
     buf = io.BytesIO()
     img.save(buf, format="BMP")
@@ -996,6 +1002,7 @@ def render_screen_raw(
     mode: str = "auto",
     is_active: bool = True,
     resume_hour: int = 6,
+    end_hour: int = 21,
 ) -> bytes:
     """Return exact 48,000 bytes (800x480 / 8) raw 1-bit buffer in chosen style."""
     img = render_screen_image(
@@ -1006,6 +1013,7 @@ def render_screen_raw(
         mode=mode,
         is_active=is_active,
         resume_hour=resume_hour,
+        end_hour=end_hour,
     )
     raw = img.tobytes()
     if invert:

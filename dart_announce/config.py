@@ -44,7 +44,7 @@ class Settings:
     display_style: str = "solari"
     schedule_enabled: bool = True
     schedule_start_hour: int = 6  # 6:00 AM
-    schedule_end_hour: int = 19   # 7:00 PM (19:00)
+    schedule_end_hour: int = 21   # 9:00 PM (21:00)
 
     def is_active_hours(self, now: datetime | None = None) -> bool:
         """Return True if current time is within active commute window, False if in down period."""
@@ -111,7 +111,7 @@ def load_settings() -> Settings:
         raise InvalidSettingsError("SCHEDULE_START_HOUR must be between 0 and 23")
 
     try:
-        schedule_end_hour = int(os.environ.get("SCHEDULE_END_HOUR", "19"))
+        schedule_end_hour = int(os.environ.get("SCHEDULE_END_HOUR", "21"))
     except ValueError as exc:
         raise InvalidSettingsError("SCHEDULE_END_HOUR must be an integer between 0 and 23") from exc
     if not 0 <= schedule_end_hour <= 23:
@@ -139,7 +139,7 @@ def save_settings(
     display_style: str = "solari",
     schedule_enabled: bool = True,
     schedule_start_hour: int = 6,
-    schedule_end_hour: int = 19,
+    schedule_end_hour: int = 21,
 ) -> Settings:
     """Validate and persist new configuration to .env and update active environment."""
     global _last_env_mtime

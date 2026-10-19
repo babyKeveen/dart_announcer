@@ -114,7 +114,7 @@ def test_load_settings_scheduler_defaults(monkeypatch):
     settings = config.load_settings()
     assert settings.schedule_enabled is True
     assert settings.schedule_start_hour == 6
-    assert settings.schedule_end_hour == 19
+    assert settings.schedule_end_hour == 21
 
 
 def test_load_settings_scheduler_custom(monkeypatch):
@@ -152,16 +152,16 @@ def test_settings_is_active_hours():
     assert disabled_sched.is_active_hours(datetime(2026, 10, 10, 2, 0)) is True
     assert disabled_sched.is_active_hours(datetime(2026, 10, 10, 12, 0)) is True
 
-    # Standard daytime schedule: 6:00 to 19:00
+    # Standard daytime schedule: 6:00 to 21:00
     normal_sched = config.Settings(
         station="Sutton", direction=None, num_mins=90, max_departures=5,
-        schedule_enabled=True, schedule_start_hour=6, schedule_end_hour=19,
+        schedule_enabled=True, schedule_start_hour=6, schedule_end_hour=21,
     )
     assert normal_sched.is_active_hours(datetime(2026, 10, 10, 5, 59)) is False
     assert normal_sched.is_active_hours(datetime(2026, 10, 10, 6, 0)) is True
     assert normal_sched.is_active_hours(datetime(2026, 10, 10, 12, 30)) is True
-    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 18, 59)) is True
-    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 19, 0)) is False
+    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 20, 59)) is True
+    assert normal_sched.is_active_hours(datetime(2026, 10, 10, 21, 0)) is False
     assert normal_sched.is_active_hours(datetime(2026, 10, 10, 23, 0)) is False
 
     # Overnight schedule (e.g. night shift: 22:00 to 6:00)

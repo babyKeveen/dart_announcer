@@ -91,7 +91,7 @@ int    g_num_mins      = DEFAULT_NUM_MINS;
 bool   g_reverse_mode  = false;
 bool   g_schedule_enabled   = true;
 int    g_schedule_start_hour = 6;   // 6 AM
-int    g_schedule_end_hour   = 19;  // 7 PM
+int    g_schedule_end_hour   = 21;  // 9 PM
 
 // Dublin Bus configuration (Stop 917 Admiral Park -> Route H1)
 String g_bus_route     = "H1";
@@ -640,7 +640,7 @@ void loadConfig() {
     g_reverse_mode        = prefs.getBool("reverse", false);
     g_schedule_enabled    = prefs.getBool("sched_en", true);
     g_schedule_start_hour = prefs.getInt("sched_start", 6);
-    g_schedule_end_hour   = prefs.getInt("sched_end", 19);
+    g_schedule_end_hour   = prefs.getInt("sched_end", 21);
     g_test_mode           = prefs.getBool("test_mode", false); // Default to Battery Wall Frame (Deep Sleep)
     g_bus_route           = prefs.getString("bus_rt", "H1");
     g_bus_stop_id         = prefs.getString("bus_stop", "8240DB000917");
@@ -712,7 +712,7 @@ String buildPortalHtml() {
     themeHtml += "<option value=\"1\"" + String(g_reverse_mode ? " selected" : "") + ">Reverse (White on Black)</option>\n";
 
     String schedHtml = "";
-    schedHtml += "<option value=\"1\"" + String(g_schedule_enabled ? " selected" : "") + ">Enabled (Clock & Weather 7pm - 6am)</option>\n";
+    schedHtml += "<option value=\"1\"" + String(g_schedule_enabled ? " selected" : "") + ">Enabled (Clock & Weather 9pm - 6am)</option>\n";
     schedHtml += "<option value=\"0\"" + String(!g_schedule_enabled ? " selected" : "") + ">Disabled (Always Live Trains)</option>\n";
 
     String modeHtml = "";
@@ -853,7 +853,7 @@ void handleSaveConfig() {
     Serial.printf("[CONFIG] Saved: SSID='%s', Station='%s', Dir='%s', Bus='%s' (%s), Reverse=%d, Sched=%d, TestMode=%d\n",
         ssid.c_str(), station.c_str(), dir.c_str(), bus_rt.c_str(), bus_stop.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
 
-    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19, test_mode, bus_rt, bus_stop, bus_name);
+    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 21, test_mode, bus_rt, bus_stop, bus_name);
     loadConfig();
 
     if (wifiChanged) {
