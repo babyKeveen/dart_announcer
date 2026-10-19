@@ -795,7 +795,7 @@ String buildPortalHtml() {
     <div style="margin-top:16px; padding-top:14px; border-top:1px solid #334155; text-align:center;">
       <a href="/update" style="display:inline-block; color:#22c55e; font-size:14px; text-decoration:none; font-weight:600;">⬆️ Over-The-Air (OTA) Firmware Update →</a>
     </div>
-    <div class="footer">DART Kitchen Display &bull; Adafruit ESP32-S3</div>
+    <div class="footer">DART Kitchen Display &bull; Weather data by <a href="https://open-meteo.com/" target="_blank" style="color:#94a3b8; text-decoration:underline;">Open-Meteo</a> &bull; Adafruit ESP32-S3</div>
   </div>
   </body>
   </html>
@@ -969,7 +969,7 @@ String buildOtaHtml() {
     <a href="/">← Live Preview</a>
     <a href="/config">⚙️ Settings</a>
   </div>
-  <div class="footer">DART Kitchen Display &bull; Over-The-Air Update</div>
+  <div class="footer">DART Kitchen Display &bull; Over-The-Air Update &bull; Weather data by <a href="https://open-meteo.com/" target="_blank" style="color:#94a3b8; text-decoration:underline;">Open-Meteo</a></div>
 </div>
 
 <script>
@@ -1263,7 +1263,7 @@ String buildPreviewHtml() {
   </div>
 
   <div class="footer">
-    Auto-refreshes every 60s &bull; http://dart-display.local/ &bull; Waveshare 7.5" HAT (800x480)
+    Auto-refreshes every 60s &bull; Train data by Irish Rail &bull; Weather data by <a href="https://open-meteo.com/" target="_blank" style="color:#94a3b8; text-decoration:underline;">Open-Meteo</a> (CC BY 4.0) &bull; http://dart-display.local/
   </div>
 </div>
 </body>

@@ -527,7 +527,7 @@ public:
 
         // 3. Footer Bar
         draw_line(0, 436, WIDTH - 1, 436, true);
-        draw_string(24, 450, "STANDBY CLOCK & WEATHER  •  OPEN-METEO ENGINE", true, 2);
+        draw_string(24, 450, "NIGHT STANDBY  •  WEATHER DATA BY OPEN-METEO", true, 2);
         draw_string(WIDTH - 210, 450, "ADAFRUIT ESP32-S3", true, 2);
     }
 

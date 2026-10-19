@@ -734,7 +734,7 @@ def _render_clock_weather(
 
     # Footer
     draw.line([(12, 440), (WIDTH - 13, 440)], fill=fg_color, width=1)
-    draw.text((22, 448), "LIVE IRISH RAIL REAL-TIME DATA  •  OPEN-METEO WEATHER ENGINE", fill=fg_color, font=f_meta)
+    draw.text((22, 448), "LIVE IRISH RAIL REAL-TIME DATA  •  WEATHER DATA BY OPEN-METEO", fill=fg_color, font=f_meta)
     draw.text((WIDTH - 210, 448), f"UPDATED: {now.strftime('%H:%M:%S')}", fill=fg_color, font=f_meta)
 
     return img

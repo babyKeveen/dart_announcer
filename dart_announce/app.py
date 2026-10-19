@@ -876,7 +876,7 @@ def _preview_clock_weather(result, heading: str, invert: bool = False, resume_ho
   </div>
 
   <div class="clock-footer">
-    <span>LIVE IRISH RAIL REAL-TIME DATA &bull; OPEN-METEO WEATHER ENGINE</span>
+    <span>LIVE IRISH RAIL REAL-TIME DATA &bull; WEATHER DATA BY <a href="https://open-meteo.com/" target="_blank" style="color:inherit; text-decoration:underline;">OPEN-METEO</a></span>
     <span>UPDATED: {now.strftime('%H:%M:%S')}</span>
     <span>ADAFRUIT ESP32-S3</span>
   </div>
