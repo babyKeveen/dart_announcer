@@ -31,8 +31,8 @@ struct BoardData {
     std::string query_time;      // e.g. "08:45"
     std::string server_date;     // e.g. "09 Oct 2026"
     std::vector<Departure> departures; // DART departures
-    std::string bus_route = "H1";
-    std::string bus_stop_name = "Stop 917 (Admiral Park)";
+    std::string bus_route = "H1 & H2";
+    std::string bus_stop_name = "H1 (Stop 917) • H2 (Stop 929)";
     std::vector<BusDeparture> bus_departures; // Dublin Bus departures
     bool success = false;
     std::string error_message;

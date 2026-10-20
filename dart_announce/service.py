@@ -41,17 +41,17 @@ def get_departures(settings: Settings) -> DeparturesResult:
         rain_chance=_get_rain_chance(station),
         temperature=_get_temperature(station),
         tomorrow_weather=_get_tomorrow_weather(station),
-        bus_route="H1",
-        bus_stop_name="Stop 917 (Admiral Park)",
+        bus_route="H1 & H2",
+        bus_stop_name="H1 (Stop 917) • H2 (Stop 929)",
         bus_departures=_get_bus_departures(),
     )
 
 
 def _get_bus_departures() -> list[BusDeparture]:
-    """Fetch live Dublin Bus departures for Stop 917 (Route H1). Degrades gracefully to []."""
+    """Fetch next bus from Route H1 (Stop 917) and next bus from Route H2 (Stop 929). Degrades gracefully to []."""
     try:
         from . import dublin_bus_client
-        return dublin_bus_client.fetch_bus_departures(stop_id="8240DB000917", route_filter="H1")[:2]
+        return dublin_bus_client.fetch_two_routes_departures()
     except Exception:
         return []
 

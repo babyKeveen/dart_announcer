@@ -18,6 +18,11 @@ from .models import BusDeparture
 
 DEFAULT_STOP_ID = "8240DB000917"  # Stop 917, Admiral Park, Willie Nolan Rd, Baldoyle
 DEFAULT_ROUTE = "H1"
+DEFAULT_STOP_NAME = "Stop 917 (Admiral Park)"
+
+DEFAULT_STOP_ID_2 = "8240DB000929"  # Stop 929, Warrenhouse Road, Baldoyle
+DEFAULT_ROUTE_2 = "H2"
+DEFAULT_STOP_NAME_2 = "Stop 929 (Warrenhouse Rd)"
 
 
 class DublinBusError(Exception):
@@ -68,7 +73,9 @@ def parse_bus_html(
         if target_rt and route.upper() != target_rt:
             continue
 
-        dest = strip_html_tags(tds[1])
+        dest_cell = re.sub(r"<div[^>]*>.*?</div>", "", tds[1], flags=re.DOTALL)
+        dest_raw = strip_html_tags(dest_cell)
+        dest = dest_raw.splitlines()[0].strip() if dest_raw else "Dublin City"
         sched = find_time_hhmm(tds[2])
 
         exp = ""
@@ -140,3 +147,38 @@ def fetch_bus_departures(
         raise DublinBusError(f"Failed to fetch Dublin Bus data for stop '{stop_id}': {exc}") from exc
 
     return parse_bus_html(html, route_filter=route_filter, ref_time=ref_time)
+
+
+def fetch_two_routes_departures(
+    stop_id_1: str = DEFAULT_STOP_ID,
+    route_1: str = DEFAULT_ROUTE,
+    stop_id_2: str = DEFAULT_STOP_ID_2,
+    route_2: str = DEFAULT_ROUTE_2,
+    ref_time: Optional[str] = None,
+    timeout: float = 8.0,
+) -> List[BusDeparture]:
+    """Fetch next bus from Route 1 and Route 2 (one row each or no row), sorted by countdown minutes."""
+    results: List[BusDeparture] = []
+
+    # Route 1: H1 from Stop 917 (Admiral Park)
+    try:
+        deps1 = fetch_bus_departures(stop_id=stop_id_1, route_filter=route_1, ref_time=ref_time, timeout=timeout)
+        if deps1:
+            bus1 = deps1[0]
+            bus1.route = route_1
+            results.append(bus1)
+    except Exception:
+        pass
+
+    # Route 2: H2 from Stop 929 (Warrenhouse Road)
+    try:
+        deps2 = fetch_bus_departures(stop_id=stop_id_2, route_filter=route_2, ref_time=ref_time, timeout=timeout)
+        if deps2:
+            bus2 = deps2[0]
+            bus2.route = route_2
+            results.append(bus2)
+    except Exception:
+        pass
+
+    results.sort(key=lambda d: d.due_in)
+    return results

@@ -186,8 +186,17 @@ public:
                 continue;
             }
 
-            // 2. Destination
-            std::string dest = strip_html_tags(tds[1]);
+            // 2. Destination (strip vehicle div and newlines if present)
+            std::string dest_cell = tds[1];
+            size_t div_pos = dest_cell.find("<div");
+            if (div_pos != std::string::npos) {
+                dest_cell = dest_cell.substr(0, div_pos);
+            }
+            std::string dest = strip_html_tags(dest_cell);
+            size_t nl_pos = dest.find_first_of("\r\n");
+            if (nl_pos != std::string::npos) {
+                dest = dest.substr(0, nl_pos);
+            }
 
             // 3. Scheduled time
             std::string sched = find_time_hhmm(tds[2]);

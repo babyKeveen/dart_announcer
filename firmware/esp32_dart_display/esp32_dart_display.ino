@@ -93,10 +93,16 @@ bool   g_schedule_enabled   = true;
 int    g_schedule_start_hour = 6;   // 6 AM
 int    g_schedule_end_hour   = 21;  // 9 PM
 
-// Dublin Bus configuration (Stop 917 Admiral Park -> Route H1)
-String g_bus_route     = "H1";
-String g_bus_stop_id   = "8240DB000917";
-String g_bus_stop_name = "Stop 917 (Admiral Park)";
+// Dublin Bus configuration:
+// Route 1: H1 from Stop 917 (Admiral Park, Baldoyle)
+String g_bus_route       = "H1";
+String g_bus_stop_id     = "8240DB000917";
+String g_bus_stop_name   = "Stop 917 (Admiral Park)";
+
+// Route 2: H2 from Stop 929 (Warrenhouse Road, Baldoyle)
+String g_bus_route_2     = "H2";
+String g_bus_stop_id_2   = "8240DB000929";
+String g_bus_stop_name_2 = "Stop 929 (Warrenhouse Rd)";
 
 // Set to false for Battery Wall Frame Mode (default: ultra-low power deep sleep).
 // Set to true in /config web portal for Desk / Test Mode (stays awake with live web preview).
@@ -563,35 +569,100 @@ void fetchDublinBusDepartures() {
     client.setInsecure(); // Disable SSL certificate verification for speed & minimal RAM usage
     client.setTimeout(6000);
 
-    HTTPClient https;
-    String url = "https://bustimes.org/stops/" + g_bus_stop_id;
-    Serial.printf("\n[Bus API] Fetching Dublin Bus timetable: %s (Free Heap: %u)\n", url.c_str(), freeHeap);
+    g_last_board.bus_departures.clear();
+    bool any_success = false;
+    std::string err_msg = "";
+
+    // --- Route 1: H1 from Stop 917 (Admiral Park) ---
+    dart::BusDeparture bus1;
+    bool has_bus1 = false;
+    if (g_bus_stop_id.length() > 0 && g_bus_route.length() > 0) {
+        HTTPClient https;
+        String url1 = "https://bustimes.org/stops/" + g_bus_stop_id;
+        Serial.printf("\n[Bus API] Fetching Dublin Bus Route 1 (%s): %s\n", g_bus_route.c_str(), url1.c_str());
+        yield();
+        if (https.begin(client, url1)) {
+            https.setUserAgent("Mozilla/5.0 (ESP32-S3 Commute Board)");
+            https.setTimeout(6000);
+            int httpCode = https.GET();
+            yield();
+            if (httpCode == HTTP_CODE_OK) {
+                String payload = https.getString();
+                Serial.printf("[Bus API] Route 1: Received %d bytes HTML.\n", (int)payload.length());
+                std::vector<dart::BusDeparture> deps = dart::Parser::parse_bus_html(payload.c_str(), g_bus_route.c_str(), g_last_board.query_time);
+                if (!deps.empty()) {
+                    bus1 = deps[0]; // Next bus for Route 1 only
+                    bus1.route = g_bus_route.c_str();
+                    has_bus1 = true;
+                    Serial.printf("[Bus API] Route 1 (%s): Next bus due in %d min (%s to %s)\n",
+                                  bus1.route.c_str(), bus1.due_in, bus1.expected.c_str(), bus1.destination.c_str());
+                } else {
+                    Serial.printf("[Bus API] Route 1 (%s): No upcoming departures found\n", g_bus_route.c_str());
+                }
+                any_success = true;
+            } else {
+                err_msg = "Stop1 HTTP " + std::to_string(httpCode);
+                Serial.printf("[Bus API] Route 1 HTTP GET failed (code %d)\n", httpCode);
+            }
+            https.end();
+        }
+    }
 
     yield();
-    if (https.begin(client, url)) {
-        https.setUserAgent("Mozilla/5.0 (ESP32-S3 Commute Board)");
-        https.setTimeout(6000);
-        int httpCode = https.GET();
+
+    // --- Route 2: H2 from Stop 929 (Warrenhouse Road) ---
+    dart::BusDeparture bus2;
+    bool has_bus2 = false;
+    if (g_bus_stop_id_2.length() > 0 && g_bus_route_2.length() > 0) {
+        HTTPClient https;
+        String url2 = "https://bustimes.org/stops/" + g_bus_stop_id_2;
+        Serial.printf("\n[Bus API] Fetching Dublin Bus Route 2 (%s): %s\n", g_bus_route_2.c_str(), url2.c_str());
         yield();
-        if (httpCode == HTTP_CODE_OK) {
-            String payload = https.getString();
-            Serial.printf("[Bus API] Received %d bytes HTML.\n", (int)payload.length());
-            g_last_board.bus_departures = dart::Parser::parse_bus_html(payload.c_str(), g_bus_route.c_str(), g_last_board.query_time);
-            g_last_board.bus_success = true;
-            g_last_board.bus_error_message = "";
-            Serial.printf("[Bus API] Successfully parsed %d departures for route %s\n",
-                          (int)g_last_board.bus_departures.size(), g_bus_route.c_str());
-        } else {
-            g_last_board.bus_success = false;
-            g_last_board.bus_error_message = "HTTP " + std::to_string(httpCode);
-            Serial.printf("[Bus API] HTTP GET failed (code %d)\n", httpCode);
+        if (https.begin(client, url2)) {
+            https.setUserAgent("Mozilla/5.0 (ESP32-S3 Commute Board)");
+            https.setTimeout(6000);
+            int httpCode = https.GET();
+            yield();
+            if (httpCode == HTTP_CODE_OK) {
+                String payload = https.getString();
+                Serial.printf("[Bus API] Route 2: Received %d bytes HTML.\n", (int)payload.length());
+                std::vector<dart::BusDeparture> deps = dart::Parser::parse_bus_html(payload.c_str(), g_bus_route_2.c_str(), g_last_board.query_time);
+                if (!deps.empty()) {
+                    bus2 = deps[0]; // Next bus for Route 2 only
+                    bus2.route = g_bus_route_2.c_str();
+                    has_bus2 = true;
+                    Serial.printf("[Bus API] Route 2 (%s): Next bus due in %d min (%s to %s)\n",
+                                  bus2.route.c_str(), bus2.due_in, bus2.expected.c_str(), bus2.destination.c_str());
+                } else {
+                    Serial.printf("[Bus API] Route 2 (%s): No upcoming departures found\n", g_bus_route_2.c_str());
+                }
+                any_success = true;
+            } else {
+                if (err_msg.empty()) err_msg = "Stop2 HTTP " + std::to_string(httpCode);
+                Serial.printf("[Bus API] Route 2 HTTP GET failed (code %d)\n", httpCode);
+            }
+            https.end();
         }
-        https.end();
-    } else {
-        g_last_board.bus_success = false;
-        g_last_board.bus_error_message = "SSL Init Failed";
-        Serial.println("[Bus API] Failed to initialize HTTPS connection to bustimes.org");
     }
+
+    client.stop();
+
+    // Each of the routes gets ONE ROW each or NO ROW
+    if (has_bus1) g_last_board.bus_departures.push_back(bus1);
+    if (has_bus2) g_last_board.bus_departures.push_back(bus2);
+
+    // Sort by due_in so the next bus arriving earliest is displayed on top
+    std::sort(g_last_board.bus_departures.begin(), g_last_board.bus_departures.end(),
+              [](const dart::BusDeparture& a, const dart::BusDeparture& b) {
+                  return a.due_in < b.due_in;
+              });
+
+    g_last_board.bus_success = any_success;
+    g_last_board.bus_error_message = err_msg;
+    Serial.printf("[Bus API] Total bus rows: %d (Route 1: %s, Route 2: %s)\n",
+                  (int)g_last_board.bus_departures.size(),
+                  has_bus1 ? "1 row" : "NO ROW",
+                  has_bus2 ? "1 row" : "NO ROW");
     yield();
 }
 
@@ -645,10 +716,18 @@ void loadConfig() {
     g_bus_route           = prefs.getString("bus_rt", "H1");
     g_bus_stop_id         = prefs.getString("bus_stop", "8240DB000917");
     g_bus_stop_name       = prefs.getString("bus_name", "Stop 917 (Admiral Park)");
+    g_bus_route_2         = prefs.getString("bus_rt2", "H2");
+    g_bus_stop_id_2       = prefs.getString("bus_stop2", "8240DB000929");
+    g_bus_stop_name_2     = prefs.getString("bus_name2", "Stop 929 (Warrenhouse Rd)");
     prefs.end();
 }
 
-void saveConfig(const String& ssid, const String& pass, const String& station, const String& dir, bool reverse, bool sched_en, int sched_start, int sched_end, bool test_mode, const String& bus_rt = "H1", const String& bus_stop = "8240DB000917", const String& bus_name = "Stop 917 (Admiral Park)") {
+void saveConfig(
+    const String& ssid, const String& pass, const String& station, const String& dir,
+    bool reverse, bool sched_en, int sched_start, int sched_end, bool test_mode,
+    const String& bus_rt = "H1", const String& bus_stop = "8240DB000917", const String& bus_name = "Stop 917 (Admiral Park)",
+    const String& bus_rt2 = "H2", const String& bus_stop2 = "8240DB000929", const String& bus_name2 = "Stop 929 (Warrenhouse Rd)"
+) {
     prefs.begin("dart_cfg", false); // Read-write mode
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
@@ -662,6 +741,9 @@ void saveConfig(const String& ssid, const String& pass, const String& station, c
     prefs.putString("bus_rt", bus_rt);
     prefs.putString("bus_stop", bus_stop);
     prefs.putString("bus_name", bus_name);
+    prefs.putString("bus_rt2", bus_rt2);
+    prefs.putString("bus_stop2", bus_stop2);
+    prefs.putString("bus_name2", bus_name2);
     prefs.end();
 }
 
@@ -771,20 +853,35 @@ String buildPortalHtml() {
     html += R"rawliteral(
       </select>
 
-      <label for="bus_route">Dublin Bus Route</label>
+      <label for="bus_route">Dublin Bus Route 1</label>
       <input type="text" name="bus_route" id="bus_route" value=")rawliteral";
     html += g_bus_route;
     html += R"rawliteral(" placeholder="e.g. H1">
 
-      <label for="bus_stop">Dublin Bus Stop GTFS ID</label>
+      <label for="bus_stop">Dublin Bus Stop 1 GTFS ID</label>
       <input type="text" name="bus_stop" id="bus_stop" value=")rawliteral";
     html += g_bus_stop_id;
     html += R"rawliteral(" placeholder="e.g. 8240DB000917">
 
-      <label for="bus_name">Dublin Bus Stop Name</label>
+      <label for="bus_name">Dublin Bus Stop 1 Name</label>
       <input type="text" name="bus_name" id="bus_name" value=")rawliteral";
     html += g_bus_stop_name;
     html += R"rawliteral(" placeholder="e.g. Stop 917 (Admiral Park)">
+
+      <label for="bus_route2">Dublin Bus Route 2</label>
+      <input type="text" name="bus_route2" id="bus_route2" value=")rawliteral";
+    html += g_bus_route_2;
+    html += R"rawliteral(" placeholder="e.g. H2">
+
+      <label for="bus_stop2">Dublin Bus Stop 2 GTFS ID</label>
+      <input type="text" name="bus_stop2" id="bus_stop2" value=")rawliteral";
+    html += g_bus_stop_id_2;
+    html += R"rawliteral(" placeholder="e.g. 8240DB000929">
+
+      <label for="bus_name2">Dublin Bus Stop 2 Name</label>
+      <input type="text" name="bus_name2" id="bus_name2" value=")rawliteral";
+    html += g_bus_stop_name_2;
+    html += R"rawliteral(" placeholder="e.g. Stop 929 (Warrenhouse Rd)">
 
       <label for="theme">Display Theme</label>
       <select name="theme" id="theme">
@@ -835,10 +932,16 @@ void handleSaveConfig() {
     String bus_rt = webServer.arg("bus_route");
     String bus_stop = webServer.arg("bus_stop");
     String bus_name = webServer.arg("bus_name");
+    String bus_rt2 = webServer.arg("bus_route2");
+    String bus_stop2 = webServer.arg("bus_stop2");
+    String bus_name2 = webServer.arg("bus_name2");
 
     if (bus_rt.length() == 0) bus_rt = g_bus_route;
     if (bus_stop.length() == 0) bus_stop = g_bus_stop_id;
     if (bus_name.length() == 0) bus_name = g_bus_stop_name;
+    if (bus_rt2.length() == 0) bus_rt2 = g_bus_route_2;
+    if (bus_stop2.length() == 0) bus_stop2 = g_bus_stop_id_2;
+    if (bus_name2.length() == 0) bus_name2 = g_bus_stop_name_2;
 
     // Preserve existing credentials if omitted on web dashboard
     if (ssid.length() == 0) {
@@ -850,10 +953,10 @@ void handleSaveConfig() {
 
     bool wifiChanged = (ssid != g_wifi_ssid || (pass.length() > 0 && pass != g_wifi_password));
 
-    Serial.printf("[CONFIG] Saved: SSID='%s', Station='%s', Dir='%s', Bus='%s' (%s), Reverse=%d, Sched=%d, TestMode=%d\n",
-        ssid.c_str(), station.c_str(), dir.c_str(), bus_rt.c_str(), bus_stop.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
+    Serial.printf("[CONFIG] Saved: SSID='%s', Station='%s', Dir='%s', Bus1='%s' (%s), Bus2='%s' (%s), Reverse=%d, Sched=%d, TestMode=%d\n",
+        ssid.c_str(), station.c_str(), dir.c_str(), bus_rt.c_str(), bus_stop.c_str(), bus_rt2.c_str(), bus_stop2.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
 
-    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 21, test_mode, bus_rt, bus_stop, bus_name);
+    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 21, test_mode, bus_rt, bus_stop, bus_name, bus_rt2, bus_stop2, bus_name2);
     loadConfig();
 
     if (wifiChanged) {
@@ -1090,7 +1193,7 @@ String buildPreviewHtml() {
     }
 
     html += "<div>Station: <b>" + String(g_last_board.station_name.c_str()) + "</b></div>";
-    html += "<div>Dublin Bus: <b>" + String(g_last_board.bus_route.c_str()) + " (" + String(g_last_board.bus_stop_name.c_str()) + ")</b></div>";
+    html += "<div>Dublin Bus: <b>" + String(g_last_board.bus_stop_name.c_str()) + "</b></div>";
     html += "<div>Query Time: <b>" + String(g_last_board.query_time.c_str()) + "</b></div>";
     html += "<div>Rain Chance: <b>" + rainInfo + "</b></div>";
     html += "<div>Battery: <b>" + batInfo + "</b></div>";
@@ -1207,9 +1310,9 @@ void fetchAndRender() {
         }
     }
 
-    // Fetch Dublin Bus departures for configured stop
-    g_last_board.bus_route = g_bus_route.c_str();
-    g_last_board.bus_stop_name = g_bus_stop_name.c_str();
+    // Fetch Dublin Bus departures for configured stops (Route 1 and Route 2)
+    g_last_board.bus_route = (g_bus_route + " & " + g_bus_route_2).c_str();
+    g_last_board.bus_stop_name = (g_bus_route + " (Stop 917)  •  " + g_bus_route_2 + " (Stop 929)").c_str();
     fetchDublinBusDepartures();
 
     redrawCanvas();

@@ -18,7 +18,7 @@ The device downloads live transit XML feeds directly from the public Irish Rail 
 flowchart TD
     subgraph External_Services["External Services"]
         IR["Irish Rail Realtime API\n(getStationDataByCodeXML)"]
-        DB["Dublin Bus Timetable Feed\n(bustimes.org Stop 917 H1)"]
+        DB["Dublin Bus Timetable Feeds\n(bustimes.org H1 Stop 917 & H2 Stop 929)"]
         OM["Open-Meteo Weather API\n(Forecast & Precipitation)"]
     end
 
@@ -185,9 +185,16 @@ The graphics subsystem is implemented in clean C++ (`dart_canvas.hpp`) without d
    * **Empty State**: Centered 2-line message (`NO UPCOMING DART DEPARTURES` / `NO TRAINS SCHEDULED (NEXT 90 MIN)`) when no trains are operating in the schedule window.
 2. **Section 2: Dublin Bus Departures (Y: 221–443)**:
    * Section divider line at Y: 221.
-   * Inverted header title bar (Y: 223–261): `DUBLIN BUS  •  ROUTE <ROUTE>  •  <STOP NAME>` (default: Route H1, Stop 917 Admiral Park).
-   * Next 2 upcoming buses (Row 1 at Y: 282, Row 2 at Y: 346) featuring large countdown badges, bold destination station (35px tall), scheduled/expected departure time, and live status (`LIVE` / `SCHED`), grouped compactly with 8px row spacing.
-   * **Empty State**: Centered 2-line notification (`NO UPCOMING BUS DEPARTURES` / `NO BUSES SCHEDULED (NEXT 90 MIN)`) when off-peak or no buses are due.
+   * Inverted header title bar (Y: 223–261): `DUBLIN BUS  •  H1 (STOP 917)  •  H2 (STOP 929)`.
+   * Next Bus from each route (Route 1: H1 from Admiral Park stop 917; Route 2: H2 from Warrenhouse Road stop 929):
+     * Each route gets ONE ROW each or NO ROW (sorted by arrival countdown minutes, up to 2 buses total).
+     * Row 1 (Y: 282) and Row 2 (Y: 346) featuring:
+       * Inverted countdown badge at X: 24 to 140 (56px tall, `DUE` / `<min> MIN`).
+       * Inverted route badge at X: 150 to 210 (`[ H1 ]` or `[ H2 ]`, 60px wide, 56px tall).
+       * Clean destination station at X: 220 (auto-scaled, stripped of vehicle registration IDs).
+       * Expected departure time at X: 475 (`EXP: <HH:MM>`).
+       * Live status right-aligned to X: 776 (`LIVE` / `SCHED`).
+   * **Empty State**: Centered 2-line notification (`NO UPCOMING BUS DEPARTURES` / `NO BUSES SCHEDULED (NEXT 90 MIN)`) when off-peak or no buses are due across both routes.
 3. **Footer: Single-Line Dashboard (Y: 444–480)**:
    * Solid divider line at Y: 444 spanning the full 800px display width.
    * Uncluttered 2-item layout (`WEATHER` and `BATTERY`) at Y: 455 with $> 125$px buffer:

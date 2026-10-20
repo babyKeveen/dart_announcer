@@ -334,15 +334,19 @@ public:
         // ================= SECTION 2: DUBLIN BUS =================
         // Title Bar (Y: 223 to 261)
         fill_rect(0, 223, WIDTH, 38, true);
-        std::string bus_rt = board.bus_route.empty() ? "H1" : board.bus_route;
-        std::string bus_st = board.bus_stop_name.empty() ? "STOP 917 (ADMIRAL PARK)" : board.bus_stop_name;
-        std::transform(bus_rt.begin(), bus_rt.end(), bus_rt.begin(), ::toupper);
-        std::transform(bus_st.begin(), bus_st.end(), bus_st.begin(), ::toupper);
+        std::string bus_title;
+        if (!board.bus_stop_name.empty()) {
+            bus_title = "DUBLIN BUS  •  " + board.bus_stop_name;
+        } else {
+            bus_title = "DUBLIN BUS  •  H1 (STOP 917)  •  H2 (STOP 929)";
+        }
+        std::transform(bus_title.begin(), bus_title.end(), bus_title.begin(), ::toupper);
+        int bus_title_w = get_string_width(bus_title, 3);
+        int bus_title_scale = (bus_title_w <= 752) ? 3 : 2;
+        int bus_title_y = (bus_title_scale == 3) ? 232 : 236;
+        draw_string(24, bus_title_y, bus_title, false, bus_title_scale);
 
-        std::string bus_title = "DUBLIN BUS  •  ROUTE " + bus_rt + "  •  " + bus_st;
-        draw_string(24, 232, bus_title, false, 3);
-
-        // Next 2 Bus Departures
+        // Next Bus from each route (at most 1 per route, up to 2 buses total)
         if (board.bus_departures.empty()) {
             std::string msg1 = "NO UPCOMING BUS DEPARTURES";
             std::string msg2 = "NO BUSES SCHEDULED (NEXT 90 MIN)";
@@ -357,26 +361,35 @@ public:
                 const auto& bus = board.bus_departures[i];
                 int ry = y_buses[i];
 
-                // Due in badge
+                // 1. Due in badge (solid black rectangle at X: 24 to 140)
                 fill_rect(24, ry + 10, 116, 56, true);
                 std::string due_txt = (bus.due_in <= 0) ? "DUE" : (std::to_string(bus.due_in) + " MIN");
                 int due_w = get_string_width(due_txt, 3);
                 int due_x = 24 + (116 - due_w) / 2;
                 draw_string(due_x, ry + 27, due_txt, false, 3);
 
-                // Destination (scale 5 for <= 9 chars, scale 4 for <= 12, scale 3 for longer)
+                // 2. Route badge (solid black rectangle at X: 150 to 210)
+                fill_rect(150, ry + 10, 60, 56, true);
+                std::string rt = bus.route.empty() ? "BUS" : bus.route;
+                std::transform(rt.begin(), rt.end(), rt.begin(), ::toupper);
+                int rt_w = get_string_width(rt, 3);
+                int rt_x = 150 + (60 - rt_w) / 2;
+                draw_string(rt_x, ry + 27, rt, false, 3);
+
+                // 3. Destination (X: 220 to 465)
                 std::string dest = bus.destination;
                 std::transform(dest.begin(), dest.end(), dest.begin(), ::toupper);
                 if (dest.length() > 16) dest = dest.substr(0, 15) + ".";
-                int dest_scale = (dest.length() <= 9) ? 5 : ((dest.length() <= 12) ? 4 : 3);
-                int dest_y = (dest_scale == 5) ? (ry + 20) : ((dest_scale == 4) ? (ry + 24) : (ry + 27));
-                draw_string(156, dest_y, dest, true, dest_scale);
+                int dest_w = get_string_width(dest, 3);
+                int dest_scale = (dest_w <= 245) ? 3 : 2;
+                int dest_y = (dest_scale == 3) ? (ry + 27) : (ry + 31);
+                draw_string(220, dest_y, dest, true, dest_scale);
 
-                // Expected / Scheduled time
+                // 4. Expected / Scheduled time (X: 475)
                 std::string exp_txt = "EXP: " + (bus.expected.empty() ? "--:--" : bus.expected);
-                draw_string(455, ry + 27, exp_txt, true, 3);
+                draw_string(475, ry + 27, exp_txt, true, 3);
 
-                // Status (Live / Sched - right-aligned to X = 776)
+                // 5. Status (Live / Sched - right-aligned to X = 776)
                 std::string st = bus.status;
                 if (st.empty()) st = "SCHED";
                 std::transform(st.begin(), st.end(), st.begin(), ::toupper);

@@ -547,12 +547,11 @@ def _render_commute(
     # ================= SECTION 2: DUBLIN BUS =================
     # Title Bar (Y: 223 to 261)
     draw.rectangle([(0, 223), (WIDTH, 261)], fill=0)
-    bus_rt = (result.bus_route or "H1").upper()
-    bus_st = (result.bus_stop_name or "STOP 917 (ADMIRAL PARK)").upper()
-    bus_title = f"DUBLIN BUS  •  ROUTE {bus_rt}  •  {bus_st}"
+    bus_st = (result.bus_stop_name or "H1 (STOP 917)  •  H2 (STOP 929)").upper()
+    bus_title = f"DUBLIN BUS  •  {bus_st}"
     draw.text((24, 230), bus_title, fill=1, font=f_title)
 
-    # Next 2 Buses (Row 1 at Y: 282, Row 2 at Y: 346)
+    # Next Bus from each route (at most 1 per route, up to 2 buses total)
     y_buses = [282, 346]
     if not result.bus_departures:
         msg1 = "NO UPCOMING BUS DEPARTURES"
@@ -567,26 +566,33 @@ def _render_commute(
         for i, b in enumerate(result.bus_departures[:2]):
             ry = y_buses[i]
 
-            # Due in badge
+            # 1. Due in badge (X: 24 to 140)
             draw.rectangle([(24, ry + 10), (140, ry + 66)], fill=0)
             due_txt = "DUE" if b.due_in <= 0 else f"{b.due_in} MIN"
             due_bbox = f_badge.getbbox(due_txt)
             due_w = due_bbox[2] - due_bbox[0]
             draw.text((24 + (116 - due_w) // 2, ry + 22), due_txt, fill=1, font=f_badge)
 
-            # Destination
+            # 2. Route badge (X: 150 to 210)
+            draw.rectangle([(150, ry + 10), (210, ry + 66)], fill=0)
+            rt_txt = (b.route or "BUS").upper()
+            rt_bbox = f_badge.getbbox(rt_txt)
+            rt_w = rt_bbox[2] - rt_bbox[0]
+            draw.text((150 + (60 - rt_w) // 2, ry + 22), rt_txt, fill=1, font=f_badge)
+
+            # 3. Destination (X: 220)
             b_dest = b.destination.upper()
             if len(b_dest) > 16:
                 b_dest = b_dest[:15] + "."
             f_d = f_dest_sm if len(b_dest) > 12 else (f_dest_md if len(b_dest) > 9 else f_dest_lg)
             y_off = 16 if len(b_dest) <= 9 else (20 if len(b_dest) <= 12 else 24)
-            draw.text((156, ry + y_off), b_dest, fill=0, font=f_d)
+            draw.text((220, ry + y_off), b_dest, fill=0, font=f_d)
 
-            # Expected
+            # 4. Expected (X: 475)
             exp_txt = f"EXP: {b.expected if b.expected else '--:--'}"
-            draw.text((455, ry + 26), exp_txt, fill=0, font=f_sub)
+            draw.text((475, ry + 26), exp_txt, fill=0, font=f_sub)
 
-            # Status (right-aligned to X = 776)
+            # 5. Status (right-aligned to X = 776)
             st = b.status.upper() if b.status else "SCHED"
             if st == "SCHEDULED":
                 st = "SCHED"
