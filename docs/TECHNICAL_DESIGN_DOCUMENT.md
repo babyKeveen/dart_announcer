@@ -3,7 +3,7 @@
 **Project:** DART Realtime Transit Announcement Display  
 **Target Hardware:** Adafruit ESP32-S3 Feather + Waveshare 7.5" E-Paper Display V2 (HAT Rev 2.3)  
 **Display Specification:** 800 × 480 Monochrome E-Ink (UC8179 Controller)  
-**Document Version:** 1.0  
+**Document Version:** 1.4  
 **Status:** Implemented & Verified in Hardware  
 
 ---
@@ -198,8 +198,8 @@ The graphics subsystem is implemented in clean C++ (`dart_canvas.hpp`) without d
 3. **Footer: Single-Line Dashboard (Y: 444–480)**:
    * Solid divider line at Y: 444 spanning the full 800px display width.
    * Uncluttered 2-item layout (`WEATHER` and `BATTERY`) at Y: 455 with $> 125$px buffer:
-     * **Weather**: `WEATHER: <TEMP>°C  •  RAIN: <RAIN>%` with dynamic `[UMBRELLA]` badge if rain $\ge 40\%$ (Left, $X = 24$).
-     * **Battery**: `BATTERY: <PERCENT>%` with visual multi-segment fuel gauge icon (Right, right-aligned to $X = 776$).
+     * **Weather**: `WEATHER: <TEMP>°C  •  RAIN: <RAIN>%` with dynamically sized `[UMBRELLA]` badge if rain $\ge 40\%$ (Left, $X = 24$).
+     * **Battery**: `<PERCENT>%` with visual fuel gauge icon, omitting the redundant `BATTERY:` text prefix (Right, right-aligned to $X = 776$).
 
 #### Horizontal Column Coordinate Grid (Zero-Overlap Guarantee across 800px Width):
 To eliminate text collisions between destination, expected time (`EXP: HH:MM`), and status (`ON TIME` / `LIVE` / `SCHED` / `DELAY`), departures use a right-aligned column grid:

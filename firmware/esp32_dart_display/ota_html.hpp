@@ -53,8 +53,9 @@ inline String buildOtaHtml() {
 
   <div class="info-box">
     <div>Target Chip: <b>Adafruit Feather ESP32-S3 (4MB)</b></div>
-    <div>Current Sketch: <b>)rawliteral";
-    html += String(sketchSize / 1024) + " KB</b></div>\n";
+    <div>Firmware Version: <b>)rawliteral";
+    html += String(dart::Canvas::FIRMWARE_VERSION) + "</b></div>\n";
+    html += "    <div>Current Sketch: <b>" + String(sketchSize / 1024) + " KB</b></div>\n";
     html += "    <div>Free App Slot: <b>" + String(freeSpace / 1024) + " KB</b></div>\n";
     html += "    <div>Total Flash: <b>" + String(flashSize / (1024 * 1024)) + " MB</b></div>\n";
     html += "    <div>Active Partition: <b>" + String(runningPart ? runningPart->label : "Unknown") + "</b></div>\n";
@@ -133,9 +134,24 @@ dropZone.addEventListener('drop', (e) => {
 const onFileSelected = (files) => {
   if (files.length === 0) return;
   selectedFile = files[0];
-  if (!selectedFile.name.endsWith('.bin')) {
+  const lower = selectedFile.name.toLowerCase();
+  if (!lower.endsWith('.bin')) {
     statusMsg.className = 'status-msg status-error';
     statusMsg.innerText = '⚠️ Please select a valid .bin firmware file!';
+    uploadBtn.disabled = true;
+    fileName.innerText = '';
+    return;
+  }
+  if (lower.includes('bootloader') || lower.includes('partitions') || lower.includes('merged') || lower.includes('boot_app0')) {
+    statusMsg.className = 'status-msg status-error';
+    statusMsg.innerText = '⚠️ Do not upload ' + selectedFile.name + '! Please select esp32_dart_display.ino.bin (~1.1 MB).';
+    uploadBtn.disabled = true;
+    fileName.innerText = '';
+    return;
+  }
+  if (selectedFile.size < 200 * 1024) {
+    statusMsg.className = 'status-msg status-error';
+    statusMsg.innerText = '⚠️ File is too small (' + Math.round(selectedFile.size / 1024) + ' KB) to be an application firmware! Select esp32_dart_display.ino.bin.';
     uploadBtn.disabled = true;
     fileName.innerText = '';
     return;

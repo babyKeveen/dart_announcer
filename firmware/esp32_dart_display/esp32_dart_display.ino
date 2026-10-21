@@ -52,6 +52,13 @@
 #include "esp_ota_ops.h"
 #include <esp_wifi.h>
 #include <esp_sleep.h>
+#include "driver/gpio.h"
+#if !ARDUINO_USB_MODE
+#include "USB.h"
+#endif
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+#include "driver/usb_serial_jtag.h"
+#endif
 #include <time.h>
 #include <vector>
 #include <algorithm>
@@ -116,10 +123,16 @@ uint32_t g_last_refresh_ms = 0;
 float g_battery_voltage = 4.2f;
 int   g_battery_percent = 100;
 bool  g_battery_is_lipo = false;
+float g_battery_crate   = 0.0f; // Charge/discharge rate (%/hr from MAX17048 register 0x16)
+bool  g_usb_powered     = false;
+bool  g_keep_web_awake  = false;
+uint32_t g_web_awake_until_ms = 0;
 
-// Weather Telemetry (Open-Meteo live rain & temperature)
-int      g_rain_chance     = -1;
-float    g_temperature     = -99.0f;
+// Weather & Battery Telemetry persisted across Deep Sleep in RTC Slow Memory
+RTC_DATA_ATTR int      g_rain_chance            = -1;
+RTC_DATA_ATTR float    g_temperature            = -99.0f;
+RTC_DATA_ATTR uint32_t s_rtc_weather_wake_count = 0;
+RTC_DATA_ATTR float    s_rtc_last_vbat          = 0.0f;
 uint32_t g_last_weather_ms = 0;
 
 // ==================== DART STATIONS (DYNAMIC & FALLBACK) ============
@@ -244,8 +257,12 @@ void fetchDartStationsList() {
 }
 
 void getStationCoordinates(const String& code, float& outLat, float& outLon) {
-    if (g_stations.empty()) {
-        fetchDartStationsList();
+    for (const auto& s : FALLBACK_STATIONS) {
+        if (s.code.equalsIgnoreCase(code)) {
+            outLat = s.lat;
+            outLon = s.lon;
+            return;
+        }
     }
     for (const auto& s : g_stations) {
         if (s.code.equalsIgnoreCase(code)) {
@@ -447,7 +464,17 @@ void updatePhysicalDisplay(const uint8_t* buffer) {
     epdSleep();
 }
 
-// ======================== BATTERY TELEMETRY ========================
+// ======================== BATTERY & USB-C TELEMETRY ========================
+bool detectUsbHostConnection() {
+#if !ARDUINO_USB_MODE
+    if (bool(USB)) return true;
+#endif
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+    if (usb_serial_jtag_is_connected()) return true;
+#endif
+    return false;
+}
+
 void readBatteryStatus() {
     static bool s_i2c_initialized = false;
     if (!s_i2c_initialized) {
@@ -457,6 +484,8 @@ void readBatteryStatus() {
         Wire.begin(SDA, SCL);
         s_i2c_initialized = true;
     }
+
+    g_battery_crate = 0.0f;
 
     // Try MAX17048 I2C fuel gauge at 0x36
     Wire.beginTransmission(0x36);
@@ -475,6 +504,14 @@ void readBatteryStatus() {
                 g_battery_percent = constrain((int)(raw_soc / 256), 0, 100);
             }
         }
+        Wire.beginTransmission(0x36);
+        Wire.write(0x16); // CRATE register (signed 16-bit, 0.208%/hr per LSB)
+        if (Wire.endTransmission() == 0) {
+            if (Wire.requestFrom((uint8_t)0x36, (size_t)2) == 2) {
+                int16_t raw_crate = (int16_t)((Wire.read() << 8) | Wire.read());
+                g_battery_crate = raw_crate * 0.208f;
+            }
+        }
     } else {
         // Fallback: Read onboard 2:1 voltage divider on Adafruit Feather ESP32-S3 (GPIO 1 / A13)
         pinMode(PIN_VBAT, INPUT);
@@ -491,6 +528,19 @@ void readBatteryStatus() {
             g_battery_percent = 100;
         }
     }
+
+    // Detect if USB-C power is present:
+    // 1. Enumerated by a USB host (PC/laptop), OR
+    // 2. No LiPo attached (running purely off USB 5V), OR
+    // 3. MAX17048 CRATE > +0.2%/hr (onboard MCP73831 is actively charging the LiPo), OR
+    // 4. Battery held at charger float top-off voltage (>= 4.17V), OR
+    // 5. Battery voltage jumped by >= +30mV compared to previous reading (charger just plugged in)
+    bool usbHost = detectUsbHostConnection();
+    bool chargingCrate = (g_battery_is_lipo && g_battery_crate > 0.2f);
+    bool chargerFloat = (g_battery_is_lipo && g_battery_voltage >= 4.17f);
+    bool voltageJump = (g_battery_is_lipo && s_rtc_last_vbat > 2.5f && (g_battery_voltage - s_rtc_last_vbat) >= 0.03f);
+    g_usb_powered = usbHost || !g_battery_is_lipo || chargingCrate || chargerFloat || voltageJump;
+    s_rtc_last_vbat = g_battery_voltage;
 }
 
 float readBatteryVoltage() {
@@ -504,9 +554,17 @@ int calculateBatteryPercentage(float voltage) {
 
 // ======================== WEATHER TELEMETRY ========================
 void fetchWeather() {
-    // Only re-fetch weather every 15 minutes (or on initial boot)
-    if (g_rain_chance >= 0 && millis() - g_last_weather_ms < 900000) {
-        return;
+    s_rtc_weather_wake_count++;
+    // Only re-fetch weather every 15 minutes when awake, or every 12 deep-sleep wakeups (~20-30 mins)
+    if (g_rain_chance >= 0) {
+        if (g_last_weather_ms > 0 && (millis() - g_last_weather_ms < 900000)) {
+            return;
+        }
+        if (g_last_weather_ms == 0 && (s_rtc_weather_wake_count % 12 != 1)) {
+            Serial.printf("[Weather] Using RTC cached weather: %d%% rain, %.1fC (wakeup #%u)\n",
+                          g_rain_chance, g_temperature, (unsigned int)s_rtc_weather_wake_count);
+            return;
+        }
     }
 
     float lat = 53.387f, lon = -6.120f;
@@ -569,6 +627,9 @@ void fetchDublinBusDepartures() {
     client.setInsecure(); // Disable SSL certificate verification for speed & minimal RAM usage
     client.setTimeout(6000);
 
+    HTTPClient https;
+    https.setReuse(true); // Reuse single TLS session across both bustimes.org stops to save ~1s of Wi-Fi/CPU power
+
     g_last_board.bus_departures.clear();
     bool any_success = false;
     std::string err_msg = "";
@@ -577,7 +638,6 @@ void fetchDublinBusDepartures() {
     dart::BusDeparture bus1;
     bool has_bus1 = false;
     if (g_bus_stop_id.length() > 0 && g_bus_route.length() > 0) {
-        HTTPClient https;
         String url1 = "https://bustimes.org/stops/" + g_bus_stop_id;
         Serial.printf("\n[Bus API] Fetching Dublin Bus Route 1 (%s): %s\n", g_bus_route.c_str(), url1.c_str());
         yield();
@@ -614,7 +674,6 @@ void fetchDublinBusDepartures() {
     dart::BusDeparture bus2;
     bool has_bus2 = false;
     if (g_bus_stop_id_2.length() > 0 && g_bus_route_2.length() > 0) {
-        HTTPClient https;
         String url2 = "https://bustimes.org/stops/" + g_bus_stop_id_2;
         Serial.printf("\n[Bus API] Fetching Dublin Bus Route 2 (%s): %s\n", g_bus_route_2.c_str(), url2.c_str());
         yield();
@@ -666,26 +725,35 @@ void fetchDublinBusDepartures() {
     yield();
 }
 
-String getLocalTimeString(int* outHour = nullptr) {
+String getLocalTimeString(int* outHour = nullptr, int* outMin = nullptr) {
     struct tm timeinfo;
     if (getLocalTime(&timeinfo, 1500)) {
         char buf[10];
         snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
         if (outHour) *outHour = timeinfo.tm_hour;
+        if (outMin) *outMin = timeinfo.tm_min;
         return String(buf);
     }
     return "";
 }
 
 uint32_t calculateSleepSeconds(const std::string& query_time) {
-    int hour = -1;
-    getLocalTimeString(&hour);
-    if (hour < 0 && query_time.length() >= 2 && query_time != "--:--") {
+    int hour = -1, minute = 0;
+    getLocalTimeString(&hour, &minute);
+    if (hour < 0 && query_time.length() >= 5 && query_time != "--:--") {
         hour = std::atoi(query_time.substr(0, 2).c_str());
+        minute = std::atoi(query_time.substr(3, 2).c_str());
     }
     if (hour >= 0) {
         if (g_schedule_enabled && (hour < g_schedule_start_hour || hour >= g_schedule_end_hour)) {
-            return 1800; // 30 mins standby sleep during scheduled down hours
+            // Sleep continuously until g_schedule_start_hour:00 (6:00 AM) instead of waking every 30m all night!
+            int hoursUntilWake = (hour >= g_schedule_end_hour)
+                ? ((24 - hour) + g_schedule_start_hour)
+                : (g_schedule_start_hour - hour);
+            int totalSeconds = (hoursUntilWake * 3600) - (minute * 60);
+            if (totalSeconds < 300) totalSeconds = 300;
+            if (totalSeconds > 43200) totalSeconds = 43200;
+            return (uint32_t)totalSeconds;
         }
         if (hour >= 6 && hour < 10) {
             return COMMUTE_REFRESH_SECONDS;
@@ -752,6 +820,7 @@ const char* AP_SSID = "DART-Frame-Setup";
 const byte DNS_PORT = 53;
 DNSServer dnsServer;
 WebServer webServer(80);
+bool g_in_captive_portal = false;
 
 void showSetupScreenOnEPD() {
     Serial.println("[EPD] Drawing Wi-Fi Setup Mode screen on e-paper...");
@@ -765,15 +834,19 @@ void showSetupScreenOnEPD() {
 }
 
 String buildPortalHtml() {
-    int n = WiFi.scanNetworks();
     String wifiOptions = "";
+    if (g_wifi_ssid.length() > 0) {
+        wifiOptions += "<option value=\"\" selected>Keep Current Network (" + g_wifi_ssid + ")</option>";
+    }
+
+    int n = WiFi.scanNetworks();
     for (int i = 0; i < n; ++i) {
         String ssid = WiFi.SSID(i);
         int rssi = WiFi.RSSI(i);
         int quality = constrain(2 * (rssi + 100), 0, 100);
         wifiOptions += "<option value=\"" + ssid + "\">" + ssid + " (" + String(quality) + "%)</option>";
     }
-    if (n == 0) {
+    if (n == 0 && g_wifi_ssid.length() == 0) {
         wifiOptions = "<option value=\"\">No networks found (type below)</option>";
     }
 
@@ -798,8 +871,8 @@ String buildPortalHtml() {
     schedHtml += "<option value=\"0\"" + String(!g_schedule_enabled ? " selected" : "") + ">Disabled (Always Live Trains)</option>\n";
 
     String modeHtml = "";
-    modeHtml += "<option value=\"1\"" + String(g_test_mode ? " selected" : "") + ">Desk / Test Mode (Web Preview + Serial ASCII)</option>\n";
-    modeHtml += "<option value=\"0\"" + String(!g_test_mode ? " selected" : "") + ">Battery Wall Frame (Deep Sleep)</option>\n";
+    modeHtml += "<option value=\"0\"" + String(!g_test_mode ? " selected" : "") + ">Auto Battery Mode (Deep Sleep on Battery, Web URL on USB-C)</option>\n";
+    modeHtml += "<option value=\"1\"" + String(g_test_mode ? " selected" : "") + ">Always Awake (Force Web Server On 24/7)</option>\n";
 
     String html = R"rawliteral(
 <!DOCTYPE html>
@@ -910,7 +983,9 @@ String buildPortalHtml() {
     <div style="margin-top:16px; padding-top:14px; border-top:1px solid #334155; text-align:center;">
       <a href="/update" style="display:inline-block; color:#22c55e; font-size:14px; text-decoration:none; font-weight:600;">⬆️ Over-The-Air (OTA) Firmware Update →</a>
     </div>
-    <div class="footer">DART Kitchen Display &bull; Weather data by <a href="https://open-meteo.com/" target="_blank" style="color:#94a3b8; text-decoration:underline;">Open-Meteo</a> &bull; Adafruit ESP32-S3</div>
+    <div class="footer">DART Kitchen Display &bull; )rawliteral";
+    html += dart::Canvas::FIRMWARE_VERSION;
+    html += R"rawliteral( &bull; Weather data by <a href="https://open-meteo.com/" target="_blank" style="color:#94a3b8; text-decoration:underline;">Open-Meteo</a> &bull; Adafruit ESP32-S3</div>
   </div>
   </body>
   </html>
@@ -943,8 +1018,9 @@ void handleSaveConfig() {
     if (bus_stop2.length() == 0) bus_stop2 = g_bus_stop_id_2;
     if (bus_name2.length() == 0) bus_name2 = g_bus_stop_name_2;
 
-    // Preserve existing credentials if omitted on web dashboard
-    if (ssid.length() == 0) {
+    // Preserve existing credentials if omitted on web dashboard.
+    // Outside of Captive Portal setup, never change the saved SSID unless a new password was also entered.
+    if (ssid.length() == 0 || (!g_in_captive_portal && g_wifi_ssid.length() > 0 && pass.length() == 0)) {
         ssid = g_wifi_ssid;
     }
     if (pass.length() == 0 && ssid == g_wifi_ssid) {
@@ -959,7 +1035,7 @@ void handleSaveConfig() {
     saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 21, test_mode, bus_rt, bus_stop, bus_name, bus_rt2, bus_stop2, bus_name2);
     loadConfig();
 
-    if (wifiChanged) {
+    if (wifiChanged || g_in_captive_portal) {
         String response = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -1009,17 +1085,23 @@ void handleSaveConfig() {
         webServer.send(200, "text/html", redirectHtml);
         webServer.client().stop();
         delay(50);
+        g_keep_web_awake = true;
+        if (!g_test_mode && !g_usb_powered) {
+            g_web_awake_until_ms = millis() + 300000UL;
+        }
         fetchAndRender();
     }
 }
 
 // OTA web portal HTML is defined in ota_html.hpp
 
+String g_ota_reject_reason = "";
+
 void handleOtaPost() {
-    if (Update.hasError()) {
+    if (g_ota_reject_reason.length() > 0 || Update.hasError()) {
         const esp_partition_t* nextPart = esp_ota_get_next_update_partition(NULL);
-        String err = Update.errorString();
-        if (!nextPart) {
+        String err = g_ota_reject_reason.length() > 0 ? g_ota_reject_reason : String(Update.errorString());
+        if (!nextPart && g_ota_reject_reason.length() == 0) {
             err = "Partition table on flash has no OTA partition! In Arduino IDE, change Tools -> Partition Scheme to 'Minimal SPIFFS (1.9MB APP with OTA)' or 'Default 4MB with spiffs' and re-flash via USB once.";
         }
         Serial.printf("[OTA] Update failed: %s\n", err.c_str());
@@ -1039,7 +1121,21 @@ void handleOtaPost() {
 void handleOtaUpload() {
     HTTPUpload& upload = webServer.upload();
     if (upload.status == UPLOAD_FILE_START) {
+        g_ota_reject_reason = "";
+        String lowerName = upload.filename;
+        lowerName.toLowerCase();
         Serial.printf("\n[OTA] Firmware upload started: %s\n", upload.filename.c_str());
+
+        if (lowerName.indexOf("bootloader") >= 0 ||
+            lowerName.indexOf("partitions") >= 0 ||
+            lowerName.indexOf("merged") >= 0 ||
+            lowerName.indexOf("boot_app0") >= 0) {
+            g_ota_reject_reason = "Invalid binary '" + upload.filename + "'. Please upload esp32_dart_display.ino.bin (not bootloader/partitions/merged).";
+            Serial.printf("[OTA] Rejected filename: %s\n", g_ota_reject_reason.c_str());
+            setStatusLed(32, 0, 0);
+            return;
+        }
+
         setStatusLed(32, 0, 32); // Purple: Flashing in progress
         
         // Start OTA with unknown size (or max available partition size)
@@ -1048,6 +1144,7 @@ void handleOtaUpload() {
             setStatusLed(32, 0, 0);
         }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (g_ota_reject_reason.length() > 0) return;
         if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
             Serial.printf("[OTA] Error Update.write: %s\n", Update.errorString());
             setStatusLed(32, 0, 0);
@@ -1055,6 +1152,14 @@ void handleOtaUpload() {
             Serial.print(".");
         }
     } else if (upload.status == UPLOAD_FILE_END) {
+        if (g_ota_reject_reason.length() > 0) return;
+        if (upload.totalSize < 200000) {
+            Update.abort();
+            g_ota_reject_reason = "Uploaded file is too small (" + String(upload.totalSize / 1024) + " KB) to be valid firmware. Please upload esp32_dart_display.ino.bin.";
+            Serial.printf("\n[OTA] %s\n", g_ota_reject_reason.c_str());
+            setStatusLed(32, 0, 0);
+            return;
+        }
         if (Update.end(true)) { // true = set the size to current progress
             Serial.printf("\n[OTA] Firmware flash complete: %u bytes written.\n", (unsigned int)upload.totalSize);
         } else {
@@ -1062,13 +1167,14 @@ void handleOtaUpload() {
             setStatusLed(32, 0, 0);
         }
     } else if (upload.status == UPLOAD_FILE_ABORTED) {
-        Update.end();
+        Update.abort();
         Serial.println("\n[OTA] Firmware upload aborted by client.");
         setStatusLed(48, 24, 0);
     }
 }
 
 void startCaptivePortal() {
+    g_in_captive_portal = true;
     setStatusLed(48, 24, 0); // Amber NeoPixel: Captive Portal active
     Serial.println("\n[SETUP] Entering Captive Portal Configuration Mode!");
     showSetupScreenOnEPD();
@@ -1198,6 +1304,7 @@ String buildPreviewHtml() {
     html += "<div>Rain Chance: <b>" + rainInfo + "</b></div>";
     html += "<div>Battery: <b>" + batInfo + "</b></div>";
     html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
+    html += "<div>Firmware: <b>" + String(dart::Canvas::FIRMWARE_VERSION) + "</b></div>";
     html += "<div>Resolution: <b>800×480</b></div>";
 
     html += R"rawliteral(
@@ -1258,36 +1365,54 @@ void fetchAndRender() {
     readBatteryStatus();
     fetchWeather();
 
-    char url[200];
-    snprintf(url, sizeof(url),
-        "http://api.irishrail.ie/realtime/realtime.asmx/getStationDataByCodeXML_WithNumMins?StationCode=%s&NumMins=%d",
-        g_station_code.c_str(), g_num_mins);
-    Serial.printf("\n[API] Fetching: %s\n", url);
+    int ntpHour = -1;
+    String ntpTime = getLocalTimeString(&ntpHour);
+    bool isNightStandby = (g_schedule_enabled && ntpHour >= 0 && (ntpHour < g_schedule_start_hour || ntpHour >= g_schedule_end_hour));
 
-    std::string xmlResponse = "";
-    HTTPClient http;
-    http.begin(url);
-    http.setTimeout(4000); // 4-second timeout to prevent server hanging
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-        xmlResponse = http.getString().c_str();
-        Serial.printf("[API] Received %d bytes XML.\n", (int)xmlResponse.length());
+    if (isNightStandby) {
+        Serial.printf("\n[Schedule] Night Standby active (%s) - skipping train & bus HTTP calls to save battery.\n", ntpTime.c_str());
+        g_last_board.query_time = ntpTime.c_str();
+        g_last_board.departures.clear();
+        g_last_board.bus_departures.clear();
+        g_last_board.success = true;
     } else {
-        Serial.printf("[ERROR] HTTP GET failed (code %d)\n", httpCode);
-    }
-    http.end();
+        char url[200];
+        snprintf(url, sizeof(url),
+            "http://api.irishrail.ie/realtime/realtime.asmx/getStationDataByCodeXML_WithNumMins?StationCode=%s&NumMins=%d",
+            g_station_code.c_str(), g_num_mins);
+        Serial.printf("\n[API] Fetching: %s\n", url);
 
-    if (!xmlResponse.empty()) {
-        g_last_board = dart::Parser::parse_station_xml(xmlResponse, g_direction.c_str());
-        Serial.printf("[Data] Parsed %s: %d trains at %s\n",
-            g_last_board.station_name.c_str(), (int)g_last_board.departures.size(), g_last_board.query_time.c_str());
-    } else {
-        g_last_board.success = false;
-        g_last_board.error_message = "Irish Rail API Offline";
+        std::string xmlResponse = "";
+        HTTPClient http;
+        http.begin(url);
+        http.setTimeout(4000); // 4-second timeout to prevent server hanging
+        int httpCode = http.GET();
+        if (httpCode == HTTP_CODE_OK) {
+            xmlResponse = http.getString().c_str();
+            Serial.printf("[API] Received %d bytes XML.\n", (int)xmlResponse.length());
+        } else {
+            Serial.printf("[ERROR] HTTP GET failed (code %d)\n", httpCode);
+        }
+        http.end();
+
+        if (!xmlResponse.empty()) {
+            g_last_board = dart::Parser::parse_station_xml(xmlResponse, g_direction.c_str());
+            Serial.printf("[Data] Parsed %s: %d trains at %s\n",
+                g_last_board.station_name.c_str(), (int)g_last_board.departures.size(), g_last_board.query_time.c_str());
+        } else {
+            g_last_board.success = false;
+            g_last_board.error_message = "Irish Rail API Offline";
+        }
     }
 
-    // Resolve station name if Irish Rail returned empty station name (e.g. night hours with no trains)
+    // Resolve station name from built-in FALLBACK_STATIONS if empty
     if (g_last_board.station_name.empty() || g_last_board.station_name == g_station_code.c_str()) {
+        for (const auto& s : FALLBACK_STATIONS) {
+            if (s.code.equalsIgnoreCase(g_station_code)) {
+                g_last_board.station_name = s.name.c_str();
+                break;
+            }
+        }
         for (const auto& s : g_stations) {
             if (s.code.equalsIgnoreCase(g_station_code)) {
                 g_last_board.station_name = s.name.c_str();
@@ -1300,8 +1425,6 @@ void fetchAndRender() {
     }
 
     // Resolve time via NTP if Irish Rail returned no trains
-    int ntpHour = -1;
-    String ntpTime = getLocalTimeString(&ntpHour);
     if (g_last_board.query_time.empty() || g_last_board.query_time == "--:--") {
         if (ntpTime.length() > 0) {
             g_last_board.query_time = ntpTime.c_str();
@@ -1310,10 +1433,21 @@ void fetchAndRender() {
         }
     }
 
-    // Fetch Dublin Bus departures for configured stops (Route 1 and Route 2)
+    // Fetch Dublin Bus departures for configured stops (Route 1 and Route 2) unless in Night Standby
     g_last_board.bus_route = (g_bus_route + " & " + g_bus_route_2).c_str();
     g_last_board.bus_stop_name = (g_bus_route + " (Stop 917)  •  " + g_bus_route_2 + " (Stop 929)").c_str();
-    fetchDublinBusDepartures();
+    if (!isNightStandby) {
+        fetchDublinBusDepartures();
+    }
+
+    // Power-saving optimization: if we are on battery and going straight to Deep Sleep,
+    // shut down the Wi-Fi radio (~120mA) BEFORE the 5-second e-paper SPI refresh!
+    if (!g_keep_web_awake) {
+        Serial.println("[Power] Shutting down Wi-Fi radio before e-paper refresh (~120mA saved during 5s refresh)...");
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        esp_wifi_stop();
+    }
 
     redrawCanvas();
 
@@ -1396,27 +1530,37 @@ void prepareForDeepSleep(uint32_t sleepSeconds) {
     // 1. Put e-paper display controller into deep sleep
     epdSleep();
 
-    // 2. Cut power to Waveshare HAT Rev 2.3 MOSFET power switch (GPIO 13)
-    digitalWrite(PIN_EPD_PWR, LOW);
-    pinMode(PIN_EPD_PWR, INPUT);
-
-    // 3. Isolate SPI and display control pins to prevent parasitic leakage
+    // 2. Isolate SPI and display control pins BEFORE cutting HAT power
+    //    (All lines MUST be LOW / PULLDOWN so CS does not back-power the unpowered HAT via ESD diodes!)
     SPI.end();
-    pinMode(PIN_EPD_CS, INPUT_PULLUP);
+    pinMode(MOSI, INPUT_PULLDOWN);
+    pinMode(SCK, INPUT_PULLDOWN);
+    pinMode(PIN_EPD_CS, INPUT_PULLDOWN);
     pinMode(PIN_EPD_DC, INPUT_PULLDOWN);
     pinMode(PIN_EPD_RST, INPUT_PULLDOWN);
     pinMode(PIN_EPD_BUSY, INPUT_PULLDOWN);
 
-    // 4. Turn off onboard NeoPixel LED & cut power
+    // 3. Actively drive Waveshare HAT Rev 2.3 PWR pin (GPIO 13) LOW & hold during deep sleep
+    //    (HAT Rev 2.3 has an onboard pull-up on PWR; floating INPUT lets HAT turn back on!)
+    pinMode(PIN_EPD_PWR, OUTPUT);
+    digitalWrite(PIN_EPD_PWR, LOW);
+    gpio_hold_en((gpio_num_t)PIN_EPD_PWR);
+
+    // 4. Turn off onboard NeoPixel LED & hold power pin LOW
     setStatusLed(0, 0, 0);
 #ifdef NEOPIXEL_POWER
     pinMode(NEOPIXEL_POWER, OUTPUT);
     digitalWrite(NEOPIXEL_POWER, !NEOPIXEL_POWER_ON);
+    gpio_hold_en((gpio_num_t)NEOPIXEL_POWER);
 #endif
 
-    // 5. Cut I2C bus power
+    // 5. Cut I2C bus power & hold LOW
+    pinMode(PIN_I2C_POWER, OUTPUT);
     digitalWrite(PIN_I2C_POWER, LOW);
-    pinMode(PIN_I2C_POWER, INPUT);
+    gpio_hold_en((gpio_num_t)PIN_I2C_POWER);
+
+    // Enable digital GPIO pad hold during ESP32-S3 deep sleep
+    gpio_deep_sleep_hold_en();
 
     // 6. Completely power down Wi-Fi and Bluetooth radios
     WiFi.disconnect(true);
@@ -1425,7 +1569,7 @@ void prepareForDeepSleep(uint32_t sleepSeconds) {
     esp_wifi_stop();
 
     // 7. Flush serial output before sleep
-    Serial.println("[Power] Peripherals isolated. Entering ESP32-S3 deep sleep.");
+    Serial.println("[Power] Peripherals isolated & GPIO holds latched. Entering ESP32-S3 deep sleep.");
     Serial.flush();
 
     // 8. Configure wakeups: Timer + BOOT Button (GPIO 0)
@@ -1438,15 +1582,30 @@ void prepareForDeepSleep(uint32_t sleepSeconds) {
 
 // ======================== MAIN EXECUTION ========================
 void setup() {
-    Serial.begin(115200);
-    delay(200);
+    // Release any GPIO holds from previous deep sleep cycle so peripherals can be powered on
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis((gpio_num_t)PIN_EPD_PWR);
+    gpio_hold_dis((gpio_num_t)PIN_I2C_POWER);
+#ifdef NEOPIXEL_POWER
+    gpio_hold_dis((gpio_num_t)NEOPIXEL_POWER);
+#endif
 
-    // Initialize onboard NeoPixel LED on Adafruit Feather ESP32-S3
+    Serial.begin(115200);
+    esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
+    bool isTimerWake = (wakeCause == ESP_SLEEP_WAKEUP_TIMER);
+
+    if (!isTimerWake) {
+        delay(200);
+    }
+
+    // Only power onboard NeoPixel LED on manual/USB boot (keep OFF during 90s battery timer wakes to save ~10mA)
 #ifdef NEOPIXEL_POWER
     pinMode(NEOPIXEL_POWER, OUTPUT);
-    digitalWrite(NEOPIXEL_POWER, NEOPIXEL_POWER_ON);
+    digitalWrite(NEOPIXEL_POWER, isTimerWake ? !NEOPIXEL_POWER_ON : NEOPIXEL_POWER_ON);
 #endif
-    setStatusLed(0, 16, 32); // Cyan: booting up
+    if (!isTimerWake) {
+        setStatusLed(0, 16, 32); // Cyan: booting up
+    }
 
     // Power on Waveshare HAT Rev 2.3 via D13
     pinMode(PIN_EPD_PWR, OUTPUT);
@@ -1470,13 +1629,14 @@ void setup() {
     Serial.printf("[Config] SSID: '%s', Station: '%s', Dir: '%s', TestMode: %d\n",
         g_wifi_ssid.c_str(), g_station_code.c_str(), g_direction.c_str(), g_test_mode ? 1 : 0);
 
-    // 2. Measure Battery
+    // 2. Measure Battery & Detect USB-C Power
     float vbat = readBatteryVoltage();
     int batPct = calculateBatteryPercentage(vbat);
-    Serial.printf("[Battery] %.2fV (%d%%, LiPo: %d)\n", vbat, batPct, g_battery_is_lipo ? 1 : 0);
+    Serial.printf("[Battery] %.2fV (%d%%, LiPo: %d, CRATE: %.2f%%/hr, USB-C Power: %d)\n",
+        vbat, batPct, g_battery_is_lipo ? 1 : 0, g_battery_crate, g_usb_powered ? 1 : 0);
 
     // Low battery protection: prevent LiPo over-discharge damage (< 3.25V)
-    if (g_battery_is_lipo && vbat < 3.25f && vbat > 2.0f) {
+    if (g_battery_is_lipo && !g_usb_powered && vbat < 3.25f && vbat > 2.0f) {
         Serial.printf("[CRITICAL] Battery voltage %.2fV is critically low! Halting to protect LiPo.\n", vbat);
         g_canvas.clear(false);
         std::string msg1 = "BATTERY CRITICALLY LOW";
@@ -1505,8 +1665,19 @@ void setup() {
         startCaptivePortal();
     }
 
+    // Determine whether http://dart-display.local should stay awake:
+    // - Always awake while USB-C power is connected (g_usb_powered)
+    // - Awake for a 5-minute window on manual BOOT button press or Reset/OTA reboot (!isTimerWake)
+    // - Always awake if forced in /config (g_test_mode)
+    g_keep_web_awake = g_test_mode || g_usb_powered || !isTimerWake;
+    if (!g_test_mode && !g_usb_powered && !isTimerWake) {
+        g_web_awake_until_ms = millis() + 300000UL; // 5-minute web server window on battery after Reset/BOOT/OTA
+    }
+
     // 4. Connect Wi-Fi
-    setStatusLed(0, 0, 32); // Blue: connecting to Wi-Fi
+    if (!isTimerWake) {
+        setStatusLed(0, 0, 32); // Blue: connecting to Wi-Fi
+    }
     Serial.printf("Connecting to Wi-Fi: %s", g_wifi_ssid.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.setHostname("dart-display");
@@ -1520,23 +1691,19 @@ void setup() {
     // If Wi-Fi fails to connect after 15 seconds:
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("\n[ERROR] Failed to connect to saved Wi-Fi network.");
-        if (g_test_mode || g_wifi_ssid.length() == 0) {
+        if (g_test_mode || !isTimerWake || g_wifi_ssid.length() == 0) {
             Serial.println("[Fallback] Starting Captive Portal for Wi-Fi reconfiguration...");
             startCaptivePortal();
         } else {
-            Serial.println("[Battery Mode] Temporary Wi-Fi failure. Entering 2-minute sleep before retry.");
+            Serial.println("[Battery Mode] Temporary Wi-Fi failure during timer wake. Entering 2-minute sleep before retry.");
             prepareForDeepSleep(120);
         }
     }
 
-    setStatusLed(0, 32, 0); // Green: connected and running!
-    Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
-
-    // Start mDNS responder so http://dart-display.local/ works seamlessly
-    if (MDNS.begin("dart-display")) {
-        MDNS.addService("http", "tcp", 80);
-        Serial.println("[mDNS] Responder active: http://dart-display.local/");
+    if (!isTimerWake) {
+        setStatusLed(0, 32, 0); // Green: connected and running!
     }
+    Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
 
     // Synchronize local time via SNTP for accurate schedule switching
     configTime(0, 0, "pool.ntp.org", "time.google.com");
@@ -1544,18 +1711,25 @@ void setup() {
     tzset();
     Serial.println("[NTP] Time synchronization initialized (Europe/Dublin).");
 
-    // 5. Initial Fetch and Render (load dynamic DART stations first for coordinates)
-    fetchDartStationsList();
+    // 5. Initial Fetch and Render (uses built-in station coordinates; shuts off Wi-Fi before EPD refresh if sleeping)
     fetchAndRender();
     g_last_refresh_ms = millis();
 
-    // 6. Test Mode vs Battery Deep Sleep Mode
-    if (g_test_mode) {
+    // 6. Keep http://dart-display.local alive if on USB-C power (or 5m manual wake window), otherwise Deep Sleep
+    if (g_keep_web_awake) {
+        if (MDNS.begin("dart-display")) {
+            MDNS.addService("http", "tcp", 80);
+            Serial.println("[mDNS] Responder active: http://dart-display.local/");
+        }
         Serial.println("\n=================================================================");
-        Serial.println("🎉 STANDALONE PREVIEW SERVER ACTIVE ON ESP32!");
+        if (g_usb_powered) {
+            Serial.println("🔌 USB-C POWER DETECTED: http://dart-display.local/ ACTIVE!");
+        } else if (!g_test_mode) {
+            Serial.println("⏱️ MANUAL WAKE: http://dart-display.local/ active for 5 minutes before Deep Sleep.");
+        } else {
+            Serial.println("🎉 ALWAYS-AWAKE MODE: http://dart-display.local/ ACTIVE!");
+        }
         Serial.printf("👉 Open http://dart-display.local/ (or http://%s/) in your browser!\n", WiFi.localIP().toString().c_str());
-        Serial.println("Auto-refreshes every 60 seconds over Wi-Fi (Desk / Test Mode).");
-        Serial.println("To switch to Battery Deep Sleep Mode, change setting in http://dart-display.local/config");
         Serial.println("=================================================================\n");
         setupPreviewServer();
     } else {
@@ -1566,10 +1740,25 @@ void setup() {
 
 void loop() {
     webServer.handleClient();
+
+    // If running on battery (USB-C unplugged) and the 5-minute manual wake window has expired, enter Deep Sleep!
+    if (!g_test_mode && !g_usb_powered && g_web_awake_until_ms > 0 && millis() > g_web_awake_until_ms) {
+        Serial.println("\n[Power] 5-minute manual wake window expired on battery. Entering Deep Sleep...");
+        uint32_t sleepSeconds = calculateSleepSeconds(g_last_board.query_time);
+        prepareForDeepSleep(sleepSeconds);
+    }
+
     if (millis() - g_last_refresh_ms > 60000) {
         g_last_refresh_ms = millis();
         Serial.println("\n[Auto-Refresh] Fetching live DART departures...");
         fetchAndRender();
+
+        // If USB-C cable was unplugged since boot, automatically transition into Deep Sleep
+        if (!g_test_mode && !g_usb_powered && (g_web_awake_until_ms == 0 || millis() > g_web_awake_until_ms)) {
+            Serial.println("\n[Power] USB-C power disconnected; transitioning to Battery Deep Sleep Mode...");
+            uint32_t sleepSeconds = calculateSleepSeconds(g_last_board.query_time);
+            prepareForDeepSleep(sleepSeconds);
+        }
     }
     delay(10);
 }

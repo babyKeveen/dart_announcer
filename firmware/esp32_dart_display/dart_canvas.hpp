@@ -15,6 +15,7 @@ public:
     static constexpr int WIDTH = 800;
     static constexpr int HEIGHT = 480;
     static constexpr int EPD_BUFFER_SIZE = 48000; // 800 * 480 / 8 bytes
+    static constexpr const char* FIRMWARE_VERSION = "v1.4";
 
 private:
     // Waveshare 7.5" V2 native layout: 1 bit per pixel (800 x 480 / 8 = 48,000 bytes)
@@ -429,16 +430,22 @@ public:
 
         if (rain_chance >= 40) {
             int ww = get_string_width(w_buf, 2);
-            fill_rect(24 + ww + 12, 452, 92, 20, true);
-            draw_string(24 + ww + 18, 455, "UMBRELLA", false, 2);
+            std::string umb_s = "UMBRELLA";
+            int umb_w = get_string_width(umb_s, 2);
+            fill_rect(24 + ww + 12, 452, umb_w + 16, 20, true);
+            draw_string(24 + ww + 20, 455, umb_s, false, 2);
         }
 
-        // 2. Battery (Right, right-aligned to X = 776)
-        std::string bat_s = "BATTERY: " + (battery_percent >= 0 ? (std::to_string(battery_percent) + "%") : "--%");
+        // 2. Battery (Right, right-aligned to X = 776) & Tiny Version Tag
+        std::string bat_s = (battery_percent >= 0 ? (std::to_string(battery_percent) + "%") : "--%");
         int bat_text_w = get_string_width(bat_s, 2);
         int bat_icon_w = 37; // 34px body + 3px terminal nub
-        int bat_total_w = bat_text_w + 10 + bat_icon_w;
+        int bat_total_w = bat_text_w + 8 + bat_icon_w;
         int bat_start_x = 776 - bat_total_w;
+
+        // Tiny firmware version tag (scale 1 = 5x7px) just to the left of the battery indicator
+        int ver_w = get_string_width(FIRMWARE_VERSION, 1);
+        draw_string(bat_start_x - ver_w - 14, 460, FIRMWARE_VERSION, true, 1);
 
         draw_string(bat_start_x, 455, bat_s, true, 2);
 
@@ -541,7 +548,7 @@ public:
         // 3. Footer Bar
         draw_line(0, 436, WIDTH - 1, 436, true);
         draw_string(24, 450, "NIGHT STANDBY  •  WEATHER DATA BY OPEN-METEO", true, 2);
-        draw_string(WIDTH - 210, 450, "ADAFRUIT ESP32-S3", true, 2);
+        draw_string(WIDTH - 255, 450, "ESP32-S3 " + std::string(FIRMWARE_VERSION), true, 2);
     }
 
     // Wi-Fi Captive Portal Setup Screen (800x480)
@@ -567,7 +574,7 @@ public:
         // 3. Footer
         draw_line(0, 436, WIDTH - 1, 436, true);
         draw_string(24, 450, "SETUP: HTTP://192.168.4.1  •  OTA: /UPDATE", true, 2);
-        draw_string(WIDTH - 220, 450, "WAVESHARE 7.5\" HAT", true, 2);
+        draw_string(WIDTH - 220, 450, "WAVESHARE " + std::string(FIRMWARE_VERSION), true, 2);
     }
 
     // Export format matching Waveshare 7.5" V2 native RAM (800 x 480 / 8 = 48,000 bytes)

@@ -614,16 +614,27 @@ def _render_commute(
     if rain_val >= 40:
         w_bbox = f_footer.getbbox(weather_full)
         ww = w_bbox[2] - w_bbox[0]
-        draw.rectangle([(24 + ww + 12, 450), (24 + ww + 96, 470)], fill=0)
-        draw.text((24 + ww + 18, 452), "UMBRELLA", fill=1, font=f_footer)
+        umb_txt = "UMBRELLA"
+        umb_bbox = f_footer.getbbox(umb_txt)
+        umb_w = umb_bbox[2] - umb_bbox[0]
+        bx1 = 24 + ww + 12
+        draw.rectangle([(bx1, 450), (bx1 + umb_w + 16, 470)], fill=0)
+        draw.text((bx1 + 8, 452), umb_txt, fill=1, font=f_footer)
 
-    # 2. Battery (Right, right-aligned to X = 776)
+    # 2. Battery (Right, right-aligned to X = 776) & Tiny Version Tag
     bat_pct = battery if battery is not None else 100
-    bat_txt = f"BATTERY: {bat_pct}%" if battery is not None else "BATTERY: --%"
+    bat_txt = f"{bat_pct}%" if battery is not None else "--%"
     bat_bbox = f_footer.getbbox(bat_txt)
     bat_w = bat_bbox[2] - bat_bbox[0]
-    bat_total_w = bat_w + 10 + 37
+    bat_total_w = bat_w + 8 + 37
     bat_start_x = 776 - bat_total_w
+
+    f_ver = _load_font("DejaVuSans-Bold.ttf", 10)
+    ver_txt = "v1.4"
+    ver_bbox = f_ver.getbbox(ver_txt)
+    ver_w = ver_bbox[2] - ver_bbox[0]
+    draw.text((bat_start_x - ver_w - 14, 456), ver_txt, fill=0, font=f_ver)
+
     draw.text((bat_start_x, 452), bat_txt, fill=0, font=f_footer)
 
     # Visual battery gauge (Ends at X = 776)
