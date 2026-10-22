@@ -15,7 +15,7 @@ public:
     static constexpr int WIDTH = 800;
     static constexpr int HEIGHT = 480;
     static constexpr int EPD_BUFFER_SIZE = 48000; // 800 * 480 / 8 bytes
-    static constexpr const char* FIRMWARE_VERSION = "v1.4";
+    static constexpr const char* FIRMWARE_VERSION = "v1.8";
 
 private:
     // Waveshare 7.5" V2 native layout: 1 bit per pixel (800 x 480 / 8 = 48,000 bytes)
@@ -488,23 +488,22 @@ public:
             draw_string(WIDTH - 76 - bs_w, 26, bat_str, false, 2);
         }
 
-        // 2. Main split: Big Digital Clock (left) & Tomorrow's Forecast (right)
-        // Clock at scale 6 (30x42 per char)
-        std::string clk = time_str.empty() ? "23:45" : time_str;
-        draw_string(40, 130, clk, true, 6);
-
-        // Date below clock
-        std::string dt = date_str.empty() ? "NIGHT STANDBY MODE" : date_str;
-        draw_string(44, 200, dt, true, 3);
+        // 2. Main split: Night Standby Status (left) & Tomorrow's Forecast (right)
+        // (No static clock in Deep Sleep mode since the screen does not refresh overnight)
+        (void)time_str;
+        (void)date_str;
+        draw_string(44, 115, "NIGHT", true, 5);
+        draw_string(44, 165, "STANDBY", true, 5);
 
         // Schedule status note
         char sched_buf[48];
         snprintf(sched_buf, sizeof(sched_buf), "RESUMES %02d:00 AM", resume_hour);
         int sb_w = get_string_width(sched_buf, 3);
-        draw_rect(44, 250, sb_w + 24, 40, true);
-        draw_string(56, 260, sched_buf, true, 3);
+        draw_rect(44, 235, sb_w + 24, 40, true);
+        draw_string(56, 245, sched_buf, true, 3);
 
-        draw_string(44, 320, "LOW POWER DEEP SLEEP MODE", true, 2);
+        draw_string(44, 305, "LOW POWER DEEP SLEEP MODE", true, 2);
+        draw_string(44, 335, "PRESS RESET FOR WEB SETUP", true, 2);
 
         // Vertical divider separating clock from weather
         draw_line(400, 80, 400, 420, true);
@@ -547,8 +546,10 @@ public:
 
         // 3. Footer Bar
         draw_line(0, 436, WIDTH - 1, 436, true);
-        draw_string(24, 450, "NIGHT STANDBY  •  WEATHER DATA BY OPEN-METEO", true, 2);
-        draw_string(WIDTH - 255, 450, "ESP32-S3 " + std::string(FIRMWARE_VERSION), true, 2);
+        draw_string(24, 450, "WEATHER DATA BY OPEN-METEO", true, 2);
+        std::string ver_label = "ESP32-S3 " + std::string(FIRMWARE_VERSION);
+        int ver_label_w = get_string_width(ver_label, 2);
+        draw_string(776 - ver_label_w, 450, ver_label, true, 2);
     }
 
     // Wi-Fi Captive Portal Setup Screen (800x480)
@@ -574,7 +575,9 @@ public:
         // 3. Footer
         draw_line(0, 436, WIDTH - 1, 436, true);
         draw_string(24, 450, "SETUP: HTTP://192.168.4.1  •  OTA: /UPDATE", true, 2);
-        draw_string(WIDTH - 220, 450, "WAVESHARE " + std::string(FIRMWARE_VERSION), true, 2);
+        std::string setup_ver = "WAVESHARE " + std::string(FIRMWARE_VERSION);
+        int setup_ver_w = get_string_width(setup_ver, 2);
+        draw_string(776 - setup_ver_w, 450, setup_ver, true, 2);
     }
 
     // Export format matching Waveshare 7.5" V2 native RAM (800 x 480 / 8 = 48,000 bytes)

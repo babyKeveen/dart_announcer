@@ -133,6 +133,8 @@ RTC_DATA_ATTR int      g_rain_chance            = -1;
 RTC_DATA_ATTR float    g_temperature            = -99.0f;
 RTC_DATA_ATTR uint32_t s_rtc_weather_wake_count = 0;
 RTC_DATA_ATTR float    s_rtc_last_vbat          = 0.0f;
+RTC_DATA_ATTR bool     s_rtc_night_screen_drawn = false;
+RTC_DATA_ATTR uint32_t s_rtc_last_canvas_hash   = 0;
 uint32_t g_last_weather_ms = 0;
 
 // ==================== DART STATIONS (DYNAMIC & FALLBACK) ============
@@ -294,6 +296,8 @@ void fetchDublinBusDepartures();
 void fetchDartStationsList();
 
 // ================== WAVESHARE 7.5" V2 (UC8179) DRIVER =============
+static bool s_epd_awake = false;
+
 void epdSendCommand(uint8_t command) {
     digitalWrite(PIN_EPD_DC, LOW);
     digitalWrite(PIN_EPD_CS, LOW);
@@ -405,6 +409,8 @@ void epdInit() {
     // TCON setting
     epdSendCommand(0x60);
     epdSendData(0x22);
+
+    s_epd_awake = true;
 }
 
 void epdDisplay(const uint8_t* buffer) {
@@ -445,6 +451,9 @@ void epdDisplay(const uint8_t* buffer) {
 }
 
 void epdSleep() {
+    if (!s_epd_awake) {
+        return; // Already in deep sleep or never initialized; prevents 15s BUSY timeout!
+    }
     Serial.println("[EPD] Putting display controller to sleep...");
     epdSendCommand(0x50);
     epdSendData(0xF7);
@@ -455,6 +464,8 @@ void epdSleep() {
     epdSendData(0xA5);
     digitalWrite(PIN_EPD_CS, HIGH);
     SPI.endTransaction(); // Release SPI bus lock
+    digitalWrite(PIN_EPD_PWR, LOW); // Cut HAT 3.3V power immediately once sleeping
+    s_epd_awake = false;
     Serial.println("[EPD] Display in deep sleep.");
 }
 
@@ -465,9 +476,16 @@ void updatePhysicalDisplay(const uint8_t* buffer) {
 }
 
 // ======================== BATTERY & USB-C TELEMETRY ========================
+#if !ARDUINO_USB_MODE
+extern "C" bool tud_mounted(void);
+extern "C" bool tud_suspended(void);
+#endif
+
 bool detectUsbHostConnection() {
 #if !ARDUINO_USB_MODE
-    if (bool(USB)) return true;
+    // Note: bool(USB) ignores tud_suspended(), staying true after USB-C unplug on battery!
+    // Checking !tud_suspended() detects USB-C cable removal within 3ms.
+    if (tud_mounted() && !tud_suspended()) return true;
 #endif
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
     if (usb_serial_jtag_is_connected()) return true;
@@ -530,16 +548,10 @@ void readBatteryStatus() {
     }
 
     // Detect if USB-C power is present:
-    // 1. Enumerated by a USB host (PC/laptop), OR
-    // 2. No LiPo attached (running purely off USB 5V), OR
-    // 3. MAX17048 CRATE > +0.2%/hr (onboard MCP73831 is actively charging the LiPo), OR
-    // 4. Battery held at charger float top-off voltage (>= 4.17V), OR
-    // 5. Battery voltage jumped by >= +30mV compared to previous reading (charger just plugged in)
+    // 1. Actively connected (not suspended) to a USB host (PC/laptop), OR
+    // 2. No LiPo attached (running purely off USB 5V)
     bool usbHost = detectUsbHostConnection();
-    bool chargingCrate = (g_battery_is_lipo && g_battery_crate > 0.2f);
-    bool chargerFloat = (g_battery_is_lipo && g_battery_voltage >= 4.17f);
-    bool voltageJump = (g_battery_is_lipo && s_rtc_last_vbat > 2.5f && (g_battery_voltage - s_rtc_last_vbat) >= 0.03f);
-    g_usb_powered = usbHost || !g_battery_is_lipo || chargingCrate || chargerFloat || voltageJump;
+    g_usb_powered = usbHost || !g_battery_is_lipo;
     s_rtc_last_vbat = g_battery_voltage;
 }
 
@@ -664,7 +676,7 @@ void fetchDublinBusDepartures() {
                 err_msg = "Stop1 HTTP " + std::to_string(httpCode);
                 Serial.printf("[Bus API] Route 1 HTTP GET failed (code %d)\n", httpCode);
             }
-            https.end();
+            // Keep TLS session open (https.setReuse(true)) so Route 2 reuses the same socket!
         }
     }
 
@@ -700,10 +712,10 @@ void fetchDublinBusDepartures() {
                 if (err_msg.empty()) err_msg = "Stop2 HTTP " + std::to_string(httpCode);
                 Serial.printf("[Bus API] Route 2 HTTP GET failed (code %d)\n", httpCode);
             }
-            https.end();
         }
     }
 
+    https.end();
     client.stop();
 
     // Each of the routes gets ONE ROW each or NO ROW
@@ -727,7 +739,9 @@ void fetchDublinBusDepartures() {
 
 String getLocalTimeString(int* outHour = nullptr, int* outMin = nullptr) {
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo, 1500)) {
+    // Wait up to 5000ms on first cold boot (when RTC is not yet synced), or 50ms when RTC already holds time across Deep Sleep
+    uint32_t waitMs = (time(nullptr) < 1700000000L) ? 5000 : 50;
+    if (getLocalTime(&timeinfo, waitMs)) {
         char buf[10];
         snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
         if (outHour) *outHour = timeinfo.tm_hour;
@@ -867,11 +881,11 @@ String buildPortalHtml() {
     themeHtml += "<option value=\"1\"" + String(g_reverse_mode ? " selected" : "") + ">Reverse (White on Black)</option>\n";
 
     String schedHtml = "";
-    schedHtml += "<option value=\"1\"" + String(g_schedule_enabled ? " selected" : "") + ">Enabled (Clock & Weather 9pm - 6am)</option>\n";
+    schedHtml += "<option value=\"1\"" + String(g_schedule_enabled ? " selected" : "") + ">Enabled (Night Standby & Weather 9pm - 6am)</option>\n";
     schedHtml += "<option value=\"0\"" + String(!g_schedule_enabled ? " selected" : "") + ">Disabled (Always Live Trains)</option>\n";
 
     String modeHtml = "";
-    modeHtml += "<option value=\"0\"" + String(!g_test_mode ? " selected" : "") + ">Auto Battery Mode (Deep Sleep on Battery, Web URL on USB-C)</option>\n";
+    modeHtml += "<option value=\"0\"" + String(!g_test_mode ? " selected" : "") + ">Auto Battery Mode (Deep Sleep; 3-Min Web Window on Reset/Boot)</option>\n";
     modeHtml += "<option value=\"1\"" + String(g_test_mode ? " selected" : "") + ">Always Awake (Force Web Server On 24/7)</option>\n";
 
     String html = R"rawliteral(
@@ -1086,8 +1100,10 @@ void handleSaveConfig() {
         webServer.client().stop();
         delay(50);
         g_keep_web_awake = true;
-        if (!g_test_mode && !g_usb_powered) {
-            g_web_awake_until_ms = millis() + 300000UL;
+        s_rtc_night_screen_drawn = false;
+        s_rtc_last_canvas_hash = 0;
+        if (!g_test_mode) {
+            g_web_awake_until_ms = millis() + 180000UL;
         }
         fetchAndRender();
     }
@@ -1305,7 +1321,12 @@ String buildPreviewHtml() {
     html += "<div>Battery: <b>" + batInfo + "</b></div>";
     html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
     html += "<div>Firmware: <b>" + String(dart::Canvas::FIRMWARE_VERSION) + "</b></div>";
-    html += "<div>Resolution: <b>800×480</b></div>";
+    if (!g_test_mode && g_web_awake_until_ms > millis()) {
+        uint32_t remSec = (g_web_awake_until_ms - millis()) / 1000UL;
+        html += "<div>Deep Sleep In: <b>" + String(remSec) + "s</b></div>";
+    } else {
+        html += "<div>Resolution: <b>800×480</b></div>";
+    }
 
     html += R"rawliteral(
   </div>
@@ -1315,6 +1336,7 @@ String buildPreviewHtml() {
     <a href="/toggle-theme" class="btn btn-sec">🌓 Toggle Theme</a>
     <a href="/config" class="btn btn-sec">⚙️ Settings & Station</a>
     <a href="/update" class="btn btn-sec">⬆️ Firmware OTA</a>
+    <a href="/sleep" class="btn btn-sec">💤 Sleep Now</a>
     <a href="/screen.bmp" target="_blank" class="btn btn-sec">🖼️ View BMP</a>
   </div>
 
@@ -1362,7 +1384,11 @@ void redrawCanvas() {
 }
 
 void fetchAndRender() {
-    readBatteryStatus();
+    // Only re-read battery if we've been awake > 15s (e.g., web portal refresh);
+    // on battery timer wakes, setup() already measured clean unloaded battery voltage before Wi-Fi turned on!
+    if (g_keep_web_awake && millis() > 15000) {
+        readBatteryStatus();
+    }
     fetchWeather();
 
     int ntpHour = -1;
@@ -1431,6 +1457,13 @@ void fetchAndRender() {
         } else {
             g_last_board.query_time = "--:--";
         }
+    } else if (ntpHour < 0 && g_last_board.query_time.length() >= 5) {
+        // Fallback: if NTP did not respond in time, extract hour from Irish Rail query_time
+        int irHour = atoi(g_last_board.query_time.substr(0, 2).c_str());
+        if (irHour >= 0 && irHour <= 23) {
+            ntpHour = irHour;
+            isNightStandby = (g_schedule_enabled && (ntpHour < g_schedule_start_hour || ntpHour >= g_schedule_end_hour));
+        }
     }
 
     // Fetch Dublin Bus departures for configured stops (Route 1 and Route 2) unless in Night Standby
@@ -1454,11 +1487,26 @@ void fetchAndRender() {
     // 2. Telemetry log (avoid 6KB ASCII dump over USB-CDC which blocks when no terminal is connected)
     Serial.printf("[Screen] 800x480 BMP buffer ready (%d bytes).\n", (int)g_bmp_size);
 
-    // 3. Update physical Waveshare 7.5" HAT Display (safe timeout if disconnected)
-    Serial.println("Updating Waveshare 7.5\" HAT e-paper (safe timeout if disconnected)...");
-    updatePhysicalDisplay(g_canvas.get_buffer());
+    // 3. Update physical Waveshare 7.5" HAT Display (skip if Night Standby or identical bitmap is already displayed!)
+    uint32_t canvasHash = 2166136261u;
+    const uint8_t* rawBuf = g_canvas.get_buffer();
+    for (size_t i = 0; i < dart::Canvas::EPD_BUFFER_SIZE; ++i) {
+        canvasHash ^= rawBuf[i];
+        canvasHash *= 16777619u;
+    }
+
+    if ((isNightStandby && s_rtc_night_screen_drawn) || (s_rtc_last_canvas_hash != 0 && canvasHash == s_rtc_last_canvas_hash)) {
+        Serial.println("[EPD] Screen content unchanged; skipping physical 5s e-paper refresh to save battery.");
+    } else {
+        Serial.println("Updating Waveshare 7.5\" HAT e-paper (safe timeout if disconnected)...");
+        updatePhysicalDisplay(rawBuf);
+        s_rtc_night_screen_drawn = isNightStandby;
+        s_rtc_last_canvas_hash = canvasHash;
+    }
     g_last_refresh_ms = millis(); // Ensure at least 60s for web server before next fetch
 }
+
+void prepareForDeepSleep(uint32_t sleepSeconds);
 
 void setupPreviewServer() {
     webServer.on("/", HTTP_GET, []() {
@@ -1520,6 +1568,15 @@ void setupPreviewServer() {
     });
     webServer.on("/update", HTTP_POST, handleOtaPost, handleOtaUpload);
     webServer.on("/save", HTTP_POST, handleSaveConfig);
+    webServer.on("/sleep", HTTP_GET, []() {
+        uint32_t sleepSeconds = calculateSleepSeconds(g_last_board.query_time);
+        String msg = "Entering Deep Sleep now for " + String(sleepSeconds) + " seconds. Web server is shutting down.";
+        webServer.sendHeader("Connection", "close");
+        webServer.send(200, "text/plain", msg);
+        webServer.client().stop();
+        delay(100);
+        prepareForDeepSleep(sleepSeconds);
+    });
     webServer.begin();
 }
 
@@ -1595,6 +1652,9 @@ void setup() {
     bool isTimerWake = (wakeCause == ESP_SLEEP_WAKEUP_TIMER);
 
     if (!isTimerWake) {
+        // Always refresh the physical e-paper display at least once on fresh boot, Reset, or OTA reboot!
+        s_rtc_night_screen_drawn = false;
+        s_rtc_last_canvas_hash = 0;
         delay(200);
     }
 
@@ -1607,10 +1667,13 @@ void setup() {
         setStatusLed(0, 16, 32); // Cyan: booting up
     }
 
-    // Power on Waveshare HAT Rev 2.3 via D13
+    // Keep Waveshare HAT Rev 2.3 powered OFF during Wi-Fi/TLS fetches; epdInit() powers it ON only when refreshing!
     pinMode(PIN_EPD_PWR, OUTPUT);
-    digitalWrite(PIN_EPD_PWR, HIGH);
-    delay(20);
+    digitalWrite(PIN_EPD_PWR, LOW);
+
+    // Initialize Dublin timezone immediately so persisted RTC time is accurate across Deep Sleep
+    setenv("TZ", "GMT0IST,M3.5.0/1,M10.5.0", 1);
+    tzset();
 
     Serial.println("\n=======================================================");
     Serial.println("  🚆 DART Announce - Adafruit Feather ESP32-S3 Display");
@@ -1629,6 +1692,20 @@ void setup() {
     Serial.printf("[Config] SSID: '%s', Station: '%s', Dir: '%s', TestMode: %d\n",
         g_wifi_ssid.c_str(), g_station_code.c_str(), g_direction.c_str(), g_test_mode ? 1 : 0);
 
+    // Fast-path Night Standby RTC check: if the ESP32 internal RC oscillator drifted and woke up early
+    // during the night while the Night Standby screen is already displayed, go straight back to Deep Sleep
+    // until g_schedule_start_hour WITHOUT turning on Wi-Fi (~160mA saved)!
+    if (isTimerWake && !g_test_mode && g_schedule_enabled && s_rtc_night_screen_drawn && time(nullptr) >= 1700000000L) {
+        int wakeHour = -1;
+        String wakeTime = getLocalTimeString(&wakeHour);
+        if (wakeHour >= 0 && (wakeHour < g_schedule_start_hour || wakeHour >= g_schedule_end_hour)) {
+            uint32_t extraSleep = calculateSleepSeconds(wakeTime.c_str());
+            Serial.printf("[Schedule] Early RTC wake at %s during Night Standby; sleeping %u more seconds without Wi-Fi.\n",
+                wakeTime.c_str(), extraSleep);
+            prepareForDeepSleep(extraSleep);
+        }
+    }
+
     // 2. Measure Battery & Detect USB-C Power
     float vbat = readBatteryVoltage();
     int batPct = calculateBatteryPercentage(vbat);
@@ -1636,7 +1713,7 @@ void setup() {
         vbat, batPct, g_battery_is_lipo ? 1 : 0, g_battery_crate, g_usb_powered ? 1 : 0);
 
     // Low battery protection: prevent LiPo over-discharge damage (< 3.25V)
-    if (g_battery_is_lipo && !g_usb_powered && vbat < 3.25f && vbat > 2.0f) {
+    if (g_battery_is_lipo && vbat < 3.25f && vbat > 2.0f) {
         Serial.printf("[CRITICAL] Battery voltage %.2fV is critically low! Halting to protect LiPo.\n", vbat);
         g_canvas.clear(false);
         std::string msg1 = "BATTERY CRITICALLY LOW";
@@ -1666,12 +1743,14 @@ void setup() {
     }
 
     // Determine whether http://dart-display.local should stay awake:
-    // - Always awake while USB-C power is connected (g_usb_powered)
-    // - Awake for a 5-minute window on manual BOOT button press or Reset/OTA reboot (!isTimerWake)
-    // - Always awake if forced in /config (g_test_mode)
-    g_keep_web_awake = g_test_mode || g_usb_powered || !isTimerWake;
-    if (!g_test_mode && !g_usb_powered && !isTimerWake) {
-        g_web_awake_until_ms = millis() + 300000UL; // 5-minute web server window on battery after Reset/BOOT/OTA
+    // NOTE: Adafruit Feather ESP32-S3 has NO hardware VBUS sense pin, so software USB-host heuristics
+    // (usb_serial_jtag_is_connected / tud_mounted) can return false positives on battery and block Deep Sleep!
+    // Therefore, in Auto Battery Mode (!g_test_mode):
+    // - On timer wake (isTimerWake): g_keep_web_awake = false -> go straight back to Deep Sleep after fetchAndRender()!
+    // - On manual Reset / BOOT button / OTA reboot (!isTimerWake): stay awake for a 3-minute config/OTA window, then Deep Sleep unconditionally!
+    g_keep_web_awake = g_test_mode || !isTimerWake;
+    if (!g_test_mode && !isTimerWake) {
+        g_web_awake_until_ms = millis() + 180000UL; // 3-minute web server window after Reset/BOOT/OTA
     }
 
     // 4. Connect Wi-Fi
@@ -1715,19 +1794,19 @@ void setup() {
     fetchAndRender();
     g_last_refresh_ms = millis();
 
-    // 6. Keep http://dart-display.local alive if on USB-C power (or 5m manual wake window), otherwise Deep Sleep
+    // 6. Keep http://dart-display.local alive if in Always Awake mode or 3-minute post-Reset/BOOT window, otherwise Deep Sleep
     if (g_keep_web_awake) {
         if (MDNS.begin("dart-display")) {
             MDNS.addService("http", "tcp", 80);
             Serial.println("[mDNS] Responder active: http://dart-display.local/");
         }
         Serial.println("\n=================================================================");
-        if (g_usb_powered) {
-            Serial.println("🔌 USB-C POWER DETECTED: http://dart-display.local/ ACTIVE!");
-        } else if (!g_test_mode) {
-            Serial.println("⏱️ MANUAL WAKE: http://dart-display.local/ active for 5 minutes before Deep Sleep.");
+        if (!g_test_mode) {
+            Serial.println("⏱️ MANUAL/BOOT WAKE: http://dart-display.local/ active for 3 minutes before Deep Sleep.");
+            // Reset 3-minute countdown from the moment the web server actually starts listening
+            g_web_awake_until_ms = millis() + 180000UL;
         } else {
-            Serial.println("🎉 ALWAYS-AWAKE MODE: http://dart-display.local/ ACTIVE!");
+            Serial.println("🎉 ALWAYS-AWAKE MODE: http://dart-display.local/ ACTIVE 24/7!");
         }
         Serial.printf("👉 Open http://dart-display.local/ (or http://%s/) in your browser!\n", WiFi.localIP().toString().c_str());
         Serial.println("=================================================================\n");
@@ -1741,24 +1820,18 @@ void setup() {
 void loop() {
     webServer.handleClient();
 
-    // If running on battery (USB-C unplugged) and the 5-minute manual wake window has expired, enter Deep Sleep!
-    if (!g_test_mode && !g_usb_powered && g_web_awake_until_ms > 0 && millis() > g_web_awake_until_ms) {
-        Serial.println("\n[Power] 5-minute manual wake window expired on battery. Entering Deep Sleep...");
+    // In Auto Battery Mode (!g_test_mode), unconditionally enter Deep Sleep once the 3-minute post-Reset/BOOT window expires!
+    if (!g_test_mode && millis() > g_web_awake_until_ms) {
+        Serial.println("\n[Power] Auto Battery Mode: 3-minute config window expired. Entering Deep Sleep...");
         uint32_t sleepSeconds = calculateSleepSeconds(g_last_board.query_time);
         prepareForDeepSleep(sleepSeconds);
     }
 
-    if (millis() - g_last_refresh_ms > 60000) {
+    // Only auto-refresh every 60s when Always Awake Mode (g_test_mode) is enabled
+    if (g_test_mode && millis() - g_last_refresh_ms > 60000) {
         g_last_refresh_ms = millis();
         Serial.println("\n[Auto-Refresh] Fetching live DART departures...");
         fetchAndRender();
-
-        // If USB-C cable was unplugged since boot, automatically transition into Deep Sleep
-        if (!g_test_mode && !g_usb_powered && (g_web_awake_until_ms == 0 || millis() > g_web_awake_until_ms)) {
-            Serial.println("\n[Power] USB-C power disconnected; transitioning to Battery Deep Sleep Mode...");
-            uint32_t sleepSeconds = calculateSleepSeconds(g_last_board.query_time);
-            prepareForDeepSleep(sleepSeconds);
-        }
     }
     delay(10);
 }
