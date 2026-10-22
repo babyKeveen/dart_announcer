@@ -15,7 +15,7 @@ public:
     static constexpr int WIDTH = 800;
     static constexpr int HEIGHT = 480;
     static constexpr int EPD_BUFFER_SIZE = 48000; // 800 * 480 / 8 bytes
-    static constexpr const char* FIRMWARE_VERSION = "v1.8";
+    static constexpr const char* FIRMWARE_VERSION = "v1.9";
 
 private:
     // Waveshare 7.5" V2 native layout: 1 bit per pixel (800 x 480 / 8 = 48,000 bytes)

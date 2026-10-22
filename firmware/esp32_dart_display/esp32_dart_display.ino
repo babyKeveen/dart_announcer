@@ -135,6 +135,7 @@ RTC_DATA_ATTR uint32_t s_rtc_weather_wake_count = 0;
 RTC_DATA_ATTR float    s_rtc_last_vbat          = 0.0f;
 RTC_DATA_ATTR bool     s_rtc_night_screen_drawn = false;
 RTC_DATA_ATTR uint32_t s_rtc_last_canvas_hash   = 0;
+RTC_DATA_ATTR bool     s_rtc_Entered_deep_sleep = false;
 uint32_t g_last_weather_ms = 0;
 
 // ==================== DART STATIONS (DYNAMIC & FALLBACK) ============
@@ -464,6 +465,7 @@ void epdSleep() {
     epdSendData(0xA5);
     digitalWrite(PIN_EPD_CS, HIGH);
     SPI.endTransaction(); // Release SPI bus lock
+    SPI.end();            // Deinitialize SPI bus cleanly after transaction
     digitalWrite(PIN_EPD_PWR, LOW); // Cut HAT 3.3V power immediately once sleeping
     s_epd_awake = false;
     Serial.println("[EPD] Display in deep sleep.");
@@ -1066,6 +1068,7 @@ void handleSaveConfig() {
         webServer.send(200, "text/html", response);
         delay(1500);
         Serial.println("[SETUP] Restarting ESP32 into new Wi-Fi network...");
+        s_rtc_Entered_deep_sleep = false;
         ESP.restart();
     } else {
         // Station/display settings updated: respond immediately to prevent browser timeout!
@@ -1130,6 +1133,7 @@ void handleOtaPost() {
         webServer.sendHeader("Connection", "close");
         webServer.send(200, "text/plain", "OK");
         delay(1000);
+        s_rtc_Entered_deep_sleep = false;
         ESP.restart();
     }
 }
@@ -1584,12 +1588,11 @@ void setupPreviewServer() {
 void prepareForDeepSleep(uint32_t sleepSeconds) {
     Serial.printf("\n[Power] Preparing for deep sleep (%u seconds)...\n", sleepSeconds);
 
-    // 1. Put e-paper display controller into deep sleep
+    // 1. Put e-paper display controller into deep sleep (calls SPI.end() if display was initialized)
     epdSleep();
 
     // 2. Isolate SPI and display control pins BEFORE cutting HAT power
     //    (All lines MUST be LOW / PULLDOWN so CS does not back-power the unpowered HAT via ESD diodes!)
-    SPI.end();
     pinMode(MOSI, INPUT_PULLDOWN);
     pinMode(SCK, INPUT_PULLDOWN);
     pinMode(PIN_EPD_CS, INPUT_PULLDOWN);
@@ -1619,21 +1622,24 @@ void prepareForDeepSleep(uint32_t sleepSeconds) {
     // Enable digital GPIO pad hold during ESP32-S3 deep sleep
     gpio_deep_sleep_hold_en();
 
-    // 6. Completely power down Wi-Fi and Bluetooth radios
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    btStop();
-    esp_wifi_stop();
+    // 6. Stop web server & power down Wi-Fi radio if still running
+    if (g_keep_web_awake) {
+        webServer.stop();
+    }
+    if (WiFi.getMode() != WIFI_OFF) {
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+    }
 
-    // 7. Flush serial output before sleep
-    Serial.println("[Power] Peripherals isolated & GPIO holds latched. Entering ESP32-S3 deep sleep.");
-    Serial.flush();
-
-    // 8. Configure wakeups: Timer + BOOT Button (GPIO 0)
+    // 7. Record in RTC memory that we entered Deep Sleep intentionally
+    //    (NOTE: Do NOT call Serial.flush() here, as USB-CDC TX buffer blocks on battery when no USB host is attached!
+    //     And do NOT enable EXT0 wakeup on GPIO 0 without RTC pull-up, as floating GPIO 0 in deep sleep wakes the
+    //     ESP32-S3 immediately with ESP_SLEEP_WAKEUP_EXT0 -> isTimerWake=false -> endless 3-minute web server loop!)
+    s_rtc_Entered_deep_sleep = true;
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BOOT_BTN, 0); // Wake immediately on BOOT button press (LOW)
 
-    // 9. Enter deep sleep
+    // 8. Enter deep sleep
     esp_deep_sleep_start();
 }
 
@@ -1649,7 +1655,12 @@ void setup() {
 
     Serial.begin(115200);
     esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
-    bool isTimerWake = (wakeCause == ESP_SLEEP_WAKEUP_TIMER);
+    esp_reset_reason_t resetReason = esp_reset_reason();
+    // Treat wakeups from deep sleep (or any non-manual wake when s_rtc_Entered_deep_sleep was latched) as automatic timer wakes;
+    // only open the 3-minute web portal on physical Reset button (ESP_RST_EXT), fresh power-on (ESP_RST_POWERON), or OTA/Config reboot!
+    bool isManualResetOrOta = (!s_rtc_Entered_deep_sleep) || (resetReason == ESP_RST_POWERON) || (resetReason == ESP_RST_EXT);
+    bool isTimerWake = (wakeCause == ESP_SLEEP_WAKEUP_TIMER) || (!isManualResetOrOta);
+    s_rtc_Entered_deep_sleep = false;
 
     if (!isTimerWake) {
         // Always refresh the physical e-paper display at least once on fresh boot, Reset, or OTA reboot!
