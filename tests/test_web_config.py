@@ -176,7 +176,7 @@ def test_reload_stations_get_redirect(monkeypatch):
 
 def test_scheduler_web_config_api(monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
-    env_file.write_text("STATION=Sutton\nDIRECTION=Southbound\nSCHEDULE_ENABLED=true\nSCHEDULE_START_HOUR=6\nSCHEDULE_END_HOUR=19\n")
+    env_file.write_text("STATION=Sutton\nDIRECTION=Southbound\nSCHEDULE_ENABLED=true\nSCHEDULE_START_HOUR=6\nSCHEDULE_END_HOUR=21\n")
     monkeypatch.setattr(config, "_ENV_PATH", env_file)
 
     # Test GET /api/config returns schedule settings
