@@ -687,8 +687,15 @@ def _render_clock_weather(
     draw.text((22, 18), heading, fill=fg_color, font=f_title)
 
     right_label = f"STANDBY  •  RESUMES {resume_hour:02d}:00"
+    cond_str = "GOOD"
     if battery is not None:
-        right_label = f"BAT: {battery}%  |  " + right_label
+        if battery < 5:
+            cond_str = "NEEDS CHARGE"
+        elif battery < 20:
+            cond_str = "POOR"
+        else:
+            cond_str = "GOOD"
+        right_label = f"BATTERY: {cond_str}  |  " + right_label
     rl_bbox = f_sub.getbbox(right_label)
     rl_w = rl_bbox[2] - rl_bbox[0]
     draw.text((WIDTH - 24 - rl_w, 24), right_label, fill=fg_color, font=f_sub)
@@ -707,7 +714,7 @@ def _render_clock_weather(
     draw.text((38, 252), "ACTIVE SCHEDULE STATUS", fill=bg_color, font=f_sub)
     draw.text((38, 288), f"• Commute window: {resume_hour:02d}:00 – {end_hour:02d}:00", fill=fg_color, font=f_body)
     draw.text((38, 318), "• Status: Down Period (Night Mode)", fill=fg_color, font=f_body)
-    draw.text((38, 348), "• Refresh: Low-power battery conservation", fill=fg_color, font=f_body)
+    draw.text((38, 348), f"• Battery Condition: {cond_str}", fill=fg_color, font=f_body)
     draw.text((38, 378), f"• Monitored Station: {result.station_name} ({result.station_code})", fill=fg_color, font=f_body)
 
     # Center vertical divider

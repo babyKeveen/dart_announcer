@@ -15,7 +15,7 @@ public:
     static constexpr int WIDTH = 800;
     static constexpr int HEIGHT = 480;
     static constexpr int EPD_BUFFER_SIZE = 48000; // 800 * 480 / 8 bytes
-    static constexpr const char* FIRMWARE_VERSION = "v1.9";
+    static constexpr const char* FIRMWARE_VERSION = "v2.0";
 
 private:
     // Waveshare 7.5" V2 native layout: 1 bit per pixel (800 x 480 / 8 = 48,000 bytes)
@@ -481,11 +481,23 @@ public:
         int title_y = (title_scale == 4) ? 18 : 23;
         draw_string(24, title_y, title, false, title_scale);
 
+        // Calculate battery condition for deep sleep display:
+        // < 5%: Needs Charge | < 20%: Poor | >= 20%: Good
+        std::string cond_str = "GOOD";
+        if (battery_percent >= 0) {
+            if (battery_percent < 5) {
+                cond_str = "NEEDS CHARGE";
+            } else if (battery_percent < 20) {
+                cond_str = "POOR";
+            } else {
+                cond_str = "GOOD";
+            }
+        }
+
         if (battery_percent >= 0) {
             draw_battery(WIDTH - 70, 24, battery_percent, false, 2);
-            std::string bat_str = std::to_string(battery_percent) + "%";
-            int bs_w = get_string_width(bat_str, 2);
-            draw_string(WIDTH - 76 - bs_w, 26, bat_str, false, 2);
+            int bs_w = get_string_width(cond_str, 2);
+            draw_string(WIDTH - 76 - bs_w, 26, cond_str, false, 2);
         }
 
         // 2. Main split: Night Standby Status (left) & Tomorrow's Forecast (right)
@@ -502,8 +514,16 @@ public:
         draw_rect(44, 235, sb_w + 24, 40, true);
         draw_string(56, 245, sched_buf, true, 3);
 
-        draw_string(44, 305, "LOW POWER DEEP SLEEP MODE", true, 2);
-        draw_string(44, 335, "PRESS RESET FOR WEB SETUP", true, 2);
+        draw_string(44, 295, "LOW POWER DEEP SLEEP MODE", true, 2);
+        if (battery_percent >= 0) {
+            std::string cond_label = (cond_str == "NEEDS CHARGE")
+                ? "BATTERY: NEEDS CHARGE"
+                : ("BATTERY CONDITION: " + cond_str);
+            draw_string(44, 322, cond_label, true, 2);
+            draw_string(44, 348, "PRESS RESET FOR WEB SETUP", true, 2);
+        } else {
+            draw_string(44, 325, "PRESS RESET FOR WEB SETUP", true, 2);
+        }
 
         // Vertical divider separating clock from weather
         draw_line(400, 80, 400, 420, true);
