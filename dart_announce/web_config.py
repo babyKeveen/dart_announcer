@@ -33,7 +33,7 @@ class ConfigPayload(BaseModel):
     max_departures: int = Field(default=5, ge=1, le=10, description="Max departures (1-10)")
     schedule_enabled: bool = Field(default=True, description="Enable smart scheduler (clock & weather during down hours)")
     schedule_start_hour: int = Field(default=6, ge=0, le=23, description="Commute active start hour (0-23, e.g. 6 for 6am)")
-    schedule_end_hour: int = Field(default=21, ge=0, le=23, description="Commute active end hour (0-23, e.g. 21 for 9pm)")
+    schedule_end_hour: int = Field(default=19, ge=0, le=23, description="Commute active end hour (0-23, e.g. 19 for 7pm)")
 
 
 @app.get("/api/config")
@@ -140,9 +140,9 @@ async def save_form(request: Request):
         schedule_start_hour = 6
 
     try:
-        schedule_end_hour = int(form_data.get("schedule_end_hour", [21])[0])
+        schedule_end_hour = int(form_data.get("schedule_end_hour", [19])[0])
     except ValueError:
-        schedule_end_hour = 21
+        schedule_end_hour = 19
 
     try:
         save_settings(
