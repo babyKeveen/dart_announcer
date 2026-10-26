@@ -918,7 +918,7 @@ String buildPortalHtml() {
     schedHtml += "<option value=\"0\"" + String(!g_schedule_enabled ? " selected" : "") + ">Disabled (Always Live Trains)</option>\n";
 
     String modeHtml = "";
-    modeHtml += "<option value=\"0\"" + String(!g_test_mode ? " selected" : "") + ">Auto Battery Mode (Deep Sleep; 3-Min Web Window on Reset/Boot)</option>\n";
+    modeHtml += "<option value=\"0\"" + String(!g_test_mode ? " selected" : "") + ">Auto Battery Mode (Deep Sleep; 5-Min Web Window on Reset/Boot)</option>\n";
     modeHtml += "<option value=\"1\"" + String(g_test_mode ? " selected" : "") + ">Always Awake (Force Web Server On 24/7)</option>\n";
 
     String html = R"rawliteral(
@@ -1138,7 +1138,7 @@ void handleSaveConfig() {
         s_rtc_night_screen_drawn = false;
         s_rtc_last_canvas_hash = 0;
         if (!g_test_mode) {
-            g_web_awake_until_ms = millis() + 180000UL;
+            g_web_awake_until_ms = millis() + 300000UL;
         }
         fetchAndRender();
     }
@@ -1853,10 +1853,10 @@ void setup() {
     // (usb_serial_jtag_is_connected / tud_mounted) can return false positives on battery and block Deep Sleep!
     // Therefore, in Auto Battery Mode (!g_test_mode):
     // - On timer wake (isTimerWake): g_keep_web_awake = false -> go straight back to Deep Sleep after fetchAndRender()!
-    // - On manual Reset / BOOT button / OTA reboot (!isTimerWake): stay awake for a 3-minute config/OTA window, then Deep Sleep unconditionally!
+    // - On manual Reset / BOOT button / OTA reboot (!isTimerWake): stay awake for a 5-minute config/OTA window, then Deep Sleep unconditionally!
     g_keep_web_awake = g_test_mode || !isTimerWake;
     if (!g_test_mode && !isTimerWake) {
-        g_web_awake_until_ms = millis() + 180000UL; // 3-minute web server window after Reset/BOOT/OTA
+        g_web_awake_until_ms = millis() + 300000UL; // 5-minute web server window after Reset/BOOT/OTA
     }
 
     // Scale CPU down to 80 MHz during background battery timer wakes (~20mA vs ~50mA at 240 MHz)
@@ -1945,7 +1945,7 @@ void setup() {
     fetchAndRender();
     g_last_refresh_ms = millis();
 
-    // 6. Keep http://dart-display.local alive if in Always Awake mode or 3-minute post-Reset/BOOT window, otherwise Deep Sleep
+    // 6. Keep http://dart-display.local alive if in Always Awake mode or 5-minute post-Reset/BOOT window, otherwise Deep Sleep
     if (g_keep_web_awake) {
         if (MDNS.begin("dart-display")) {
             MDNS.addService("http", "tcp", 80);
@@ -1953,9 +1953,9 @@ void setup() {
         }
         Serial.println("\n=================================================================");
         if (!g_test_mode) {
-            Serial.println("⏱️ MANUAL/BOOT WAKE: http://dart-display.local/ active for 3 minutes before Deep Sleep.");
-            // Reset 3-minute countdown from the moment the web server actually starts listening
-            g_web_awake_until_ms = millis() + 180000UL;
+            Serial.println("⏱️ MANUAL/BOOT WAKE: http://dart-display.local/ active for 5 minutes before Deep Sleep.");
+            // Reset 5-minute countdown from the moment the web server actually starts listening
+            g_web_awake_until_ms = millis() + 300000UL;
         } else {
             Serial.println("🎉 ALWAYS-AWAKE MODE: http://dart-display.local/ ACTIVE 24/7!");
         }
@@ -1971,9 +1971,9 @@ void setup() {
 void loop() {
     webServer.handleClient();
 
-    // In Auto Battery Mode (!g_test_mode), unconditionally enter Deep Sleep once the 3-minute post-Reset/BOOT window expires!
+    // In Auto Battery Mode (!g_test_mode), unconditionally enter Deep Sleep once the 5-minute post-Reset/BOOT window expires!
     if (!g_test_mode && millis() > g_web_awake_until_ms) {
-        Serial.println("\n[Power] Auto Battery Mode: 3-minute config window expired. Entering Deep Sleep...");
+        Serial.println("\n[Power] Auto Battery Mode: 5-minute config window expired. Entering Deep Sleep...");
         uint32_t sleepSeconds = calculateSleepSeconds(g_last_board.query_time);
         prepareForDeepSleep(sleepSeconds);
     }
