@@ -85,7 +85,9 @@ const int PIN_BOOT_BTN = 0;   // BOOT button on Adafruit ESP32-S3 Feather
 const char* DEFAULT_STATION_CODE  = "SUTTN";
 const char* DEFAULT_DIRECTION     = "Southbound";
 const int   DEFAULT_NUM_MINS      = 90;
-const uint32_t COMMUTE_REFRESH_SECONDS = 120; // 2 minutes when train/bus is approaching during weekday peak
+const int   DEFAULT_CATCHABLE_MIN_MINS = 6;  // Departures < 6 min (<= 5 min) are too late to walk to
+const int   DEFAULT_CATCHABLE_MAX_MINS = 18; // Departures <= 18 min trigger fast refresh
+const uint32_t COMMUTE_REFRESH_SECONDS = 120; // 2 minutes when train/bus is in catchable window during weekday peak
 const uint32_t OFFPEAK_REFRESH_SECONDS = 300; // 5 minutes
 
 // Configuration loaded from NVS
@@ -99,6 +101,8 @@ bool   g_reverse_mode  = false;
 bool   g_schedule_enabled   = true;
 int    g_schedule_start_hour = 6;   // 6 AM
 int    g_schedule_end_hour   = 19;  // 7 PM
+int    g_catchable_min_mins  = DEFAULT_CATCHABLE_MIN_MINS; // Min catchable ETA (mins)
+int    g_catchable_max_mins  = DEFAULT_CATCHABLE_MAX_MINS; // Max catchable ETA (mins)
 
 // Dublin Bus configuration:
 // Route 1: H1 from Stop 917 (Admiral Park, Baldoyle)
@@ -781,20 +785,21 @@ uint32_t calculateSleepSeconds(const std::string& query_time) {
             return (uint32_t)totalSeconds;
         }
 
-        // Check if any displayed DART train or Dublin Bus is in the actionable
-        // "walk-to-station" window (6-18 mins ETA). Since walking takes ~10 mins,
-        // departures <= 5 mins are already too late to catch from home.
-        bool hasCatchableCommute = false; // 6 to 18 mins ETA
-        bool hasCatchableOffpeak = false; // 6 to 15 mins ETA
+        // Check if any displayed DART train or Dublin Bus is in the configured
+        // "Catchable Walk Window" (g_catchable_min_mins to g_catchable_max_mins ETA).
+        // Departures below g_catchable_min_mins are already too late to catch from home.
+        bool hasCatchableCommute = false;
+        bool hasCatchableOffpeak = false;
+        int offpeakMaxMins = std::max(g_catchable_min_mins, g_catchable_max_mins - 3);
         for (size_t i = 0; i < std::min((size_t)2, g_last_board.departures.size()); ++i) {
             int due = g_last_board.departures[i].due_in;
-            if (due >= 6 && due <= 18) hasCatchableCommute = true;
-            if (due >= 6 && due <= 15) hasCatchableOffpeak = true;
+            if (due >= g_catchable_min_mins && due <= g_catchable_max_mins) hasCatchableCommute = true;
+            if (due >= g_catchable_min_mins && due <= offpeakMaxMins) hasCatchableOffpeak = true;
         }
         for (size_t i = 0; i < std::min((size_t)2, g_last_board.bus_departures.size()); ++i) {
             int due = g_last_board.bus_departures[i].due_in;
-            if (due >= 6 && due <= 18) hasCatchableCommute = true;
-            if (due >= 6 && due <= 15) hasCatchableOffpeak = true;
+            if (due >= g_catchable_min_mins && due <= g_catchable_max_mins) hasCatchableCommute = true;
+            if (due >= g_catchable_min_mins && due <= offpeakMaxMins) hasCatchableOffpeak = true;
         }
 
         // Weekday commute peak (Mon-Fri 06:00-10:00 and 16:00-19:00)
@@ -802,14 +807,14 @@ uint32_t calculateSleepSeconds(const std::string& query_time) {
         bool isCommuteWindow = (!isWeekend) && ((hour >= 6 && hour < 10) || (hour >= 16 && hour < 19));
 
         if (isCommuteWindow) {
-            // Refresh every 2m (120s) only when a departure is in the catchable 6-18m walk window;
-            // drop to 4m (240s) if departures are <= 5m (too late to catch) or > 18m away
+            // Refresh every 2m (120s) only when a departure is in the catchable walk window;
+            // drop to 4m (240s) if departures are too late (< catch_min) or too far (> catch_max)
             return hasCatchableCommute ? COMMUTE_REFRESH_SECONDS : 240;
         }
         if (hour >= 23 || hour < 6) {
             return 1800; // 30 mins
         }
-        // Off-peak / Weekend: 3m (180s) if a departure is in the catchable 6-15m window, otherwise 5m (300s)
+        // Off-peak / Weekend: 3m (180s) if a departure is in the catchable off-peak window, otherwise 5m (300s)
         return hasCatchableOffpeak ? 180 : OFFPEAK_REFRESH_SECONDS;
     }
     return OFFPEAK_REFRESH_SECONDS;
@@ -827,6 +832,8 @@ void loadConfig() {
     g_schedule_enabled    = prefs.getBool("sched_en", true);
     g_schedule_start_hour = prefs.getInt("sched_start", 6);
     g_schedule_end_hour   = prefs.getInt("sched_end", 19);
+    g_catchable_min_mins  = prefs.getInt("catch_min", DEFAULT_CATCHABLE_MIN_MINS);
+    g_catchable_max_mins  = prefs.getInt("catch_max", DEFAULT_CATCHABLE_MAX_MINS);
     g_test_mode           = prefs.getBool("test_mode", false); // Default to Battery Wall Frame (Deep Sleep)
     g_bus_route           = prefs.getString("bus_rt", "H1");
     g_bus_stop_id         = prefs.getString("bus_stop", "8240DB000917");
@@ -835,6 +842,9 @@ void loadConfig() {
     g_bus_stop_id_2       = prefs.getString("bus_stop2", "8240DB000929");
     g_bus_stop_name_2     = prefs.getString("bus_name2", "Stop 929 (Warrenhouse Rd)");
     prefs.end();
+
+    g_catchable_min_mins = constrain(g_catchable_min_mins, 0, 60);
+    g_catchable_max_mins = constrain(g_catchable_max_mins, g_catchable_min_mins, 90);
 
     // Migrate old 21:00 (9pm) NVS value to 19:00 (7pm)
     if (g_schedule_end_hour == 21) {
@@ -849,8 +859,11 @@ void saveConfig(
     const String& ssid, const String& pass, const String& station, const String& dir,
     bool reverse, bool sched_en, int sched_start, int sched_end, bool test_mode,
     const String& bus_rt = "H1", const String& bus_stop = "8240DB000917", const String& bus_name = "Stop 917 (Admiral Park)",
-    const String& bus_rt2 = "H2", const String& bus_stop2 = "8240DB000929", const String& bus_name2 = "Stop 929 (Warrenhouse Rd)"
+    const String& bus_rt2 = "H2", const String& bus_stop2 = "8240DB000929", const String& bus_name2 = "Stop 929 (Warrenhouse Rd)",
+    int catch_min = DEFAULT_CATCHABLE_MIN_MINS, int catch_max = DEFAULT_CATCHABLE_MAX_MINS
 ) {
+    catch_min = constrain(catch_min, 0, 60);
+    catch_max = constrain(catch_max, catch_min, 90);
     prefs.begin("dart_cfg", false); // Read-write mode
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
@@ -860,6 +873,8 @@ void saveConfig(
     prefs.putBool("sched_en", sched_en);
     prefs.putInt("sched_start", sched_start);
     prefs.putInt("sched_end", sched_end);
+    prefs.putInt("catch_min", catch_min);
+    prefs.putInt("catch_max", catch_max);
     prefs.putBool("test_mode", test_mode);
     prefs.putString("bus_rt", bus_rt);
     prefs.putString("bus_stop", bus_stop);
@@ -1025,6 +1040,22 @@ String buildPortalHtml() {
     html += R"rawliteral(
       </select>
 
+      <label>Catchable Walk Window (Fast Refresh ETA in Mins)</label>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div>
+          <label for="catch_min" style="font-size:11px; color:#94a3b8;">Min ETA (Too-Late Cutoff)</label>
+          <input type="number" name="catch_min" id="catch_min" min="0" max="60" value=")rawliteral";
+    html += String(g_catchable_min_mins);
+    html += R"rawliteral(">
+        </div>
+        <div>
+          <label for="catch_max" style="font-size:11px; color:#94a3b8;">Max ETA (Leave Window)</label>
+          <input type="number" name="catch_max" id="catch_max" min="1" max="90" value=")rawliteral";
+    html += String(g_catchable_max_mins);
+    html += R"rawliteral(">
+        </div>
+      </div>
+
       <label for="op_mode">Operating Mode</label>
       <select name="op_mode" id="op_mode">
 )rawliteral";
@@ -1065,6 +1096,8 @@ void handleSaveConfig() {
     String bus_rt2 = webServer.arg("bus_route2");
     String bus_stop2 = webServer.arg("bus_stop2");
     String bus_name2 = webServer.arg("bus_name2");
+    int catch_min = webServer.hasArg("catch_min") ? webServer.arg("catch_min").toInt() : g_catchable_min_mins;
+    int catch_max = webServer.hasArg("catch_max") ? webServer.arg("catch_max").toInt() : g_catchable_max_mins;
 
     if (bus_rt.length() == 0) bus_rt = g_bus_route;
     if (bus_stop.length() == 0) bus_stop = g_bus_stop_id;
@@ -1084,10 +1117,10 @@ void handleSaveConfig() {
 
     bool wifiChanged = (ssid != g_wifi_ssid || (pass.length() > 0 && pass != g_wifi_password));
 
-    Serial.printf("[CONFIG] Saved: SSID='%s', Station='%s', Dir='%s', Bus1='%s' (%s), Bus2='%s' (%s), Reverse=%d, Sched=%d, TestMode=%d\n",
-        ssid.c_str(), station.c_str(), dir.c_str(), bus_rt.c_str(), bus_stop.c_str(), bus_rt2.c_str(), bus_stop2.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, test_mode ? 1 : 0);
+    Serial.printf("[CONFIG] Saved: SSID='%s', Station='%s', Dir='%s', Bus1='%s' (%s), Bus2='%s' (%s), Reverse=%d, Sched=%d, WalkWindow=%d-%dm, TestMode=%d\n",
+        ssid.c_str(), station.c_str(), dir.c_str(), bus_rt.c_str(), bus_stop.c_str(), bus_rt2.c_str(), bus_stop2.c_str(), reverse ? 1 : 0, sched_en ? 1 : 0, catch_min, catch_max, test_mode ? 1 : 0);
 
-    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19, test_mode, bus_rt, bus_stop, bus_name, bus_rt2, bus_stop2, bus_name2);
+    saveConfig(ssid, pass, station, dir, reverse, sched_en, 6, 19, test_mode, bus_rt, bus_stop, bus_name, bus_rt2, bus_stop2, bus_name2, catch_min, catch_max);
     loadConfig();
 
     if (wifiChanged || g_in_captive_portal) {
@@ -1364,6 +1397,7 @@ String buildPreviewHtml() {
     html += "<div>Rain Chance: <b>" + rainInfo + "</b></div>";
     html += "<div>Battery: <b>" + batInfo + "</b></div>";
     html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
+    html += "<div>Walk Window: <b>" + String(g_catchable_min_mins) + "–" + String(g_catchable_max_mins) + "m</b></div>";
     html += "<div>Firmware: <b>" + String(dart::Canvas::FIRMWARE_VERSION) + "</b></div>";
     if (!g_test_mode && g_web_awake_until_ms > millis()) {
         uint32_t remSec = (g_web_awake_until_ms - millis()) / 1000UL;
