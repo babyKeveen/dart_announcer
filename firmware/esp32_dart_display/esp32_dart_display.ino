@@ -85,7 +85,7 @@ const int PIN_BOOT_BTN = 0;   // BOOT button on Adafruit ESP32-S3 Feather
 const char* DEFAULT_STATION_CODE  = "SUTTN";
 const char* DEFAULT_DIRECTION     = "Southbound";
 const int   DEFAULT_NUM_MINS      = 90;
-const uint32_t COMMUTE_REFRESH_SECONDS = 90;
+const uint32_t COMMUTE_REFRESH_SECONDS = 120; // 2 minutes when train/bus is approaching during weekday peak
 const uint32_t OFFPEAK_REFRESH_SECONDS = 300; // 5 minutes
 
 // Configuration loaded from NVS
@@ -98,7 +98,7 @@ int    g_num_mins      = DEFAULT_NUM_MINS;
 bool   g_reverse_mode  = false;
 bool   g_schedule_enabled   = true;
 int    g_schedule_start_hour = 6;   // 6 AM
-int    g_schedule_end_hour   = 21;  // 9 PM
+int    g_schedule_end_hour   = 19;  // 7 PM
 
 // Dublin Bus configuration:
 // Route 1: H1 from Stop 917 (Admiral Park, Baldoyle)
@@ -128,7 +128,7 @@ bool  g_usb_powered     = false;
 bool  g_keep_web_awake  = false;
 uint32_t g_web_awake_until_ms = 0;
 
-// Weather & Battery Telemetry persisted across Deep Sleep in RTC Slow Memory
+// Weather, Wi-Fi Fast-Connect & Battery Telemetry persisted across Deep Sleep in RTC Slow Memory
 RTC_DATA_ATTR int      g_rain_chance            = -1;
 RTC_DATA_ATTR float    g_temperature            = -99.0f;
 RTC_DATA_ATTR uint32_t s_rtc_weather_wake_count = 0;
@@ -136,6 +136,14 @@ RTC_DATA_ATTR float    s_rtc_last_vbat          = 0.0f;
 RTC_DATA_ATTR bool     s_rtc_night_screen_drawn = false;
 RTC_DATA_ATTR uint32_t s_rtc_last_canvas_hash   = 0;
 RTC_DATA_ATTR bool     s_rtc_Entered_deep_sleep = false;
+RTC_DATA_ATTR bool     s_rtc_wifi_valid         = false;
+RTC_DATA_ATTR uint8_t  s_rtc_bssid[6]           = {0};
+RTC_DATA_ATTR int32_t  s_rtc_channel            = 0;
+RTC_DATA_ATTR uint32_t s_rtc_local_ip           = 0;
+RTC_DATA_ATTR uint32_t s_rtc_gateway            = 0;
+RTC_DATA_ATTR uint32_t s_rtc_subnet             = 0;
+RTC_DATA_ATTR uint32_t s_rtc_dns1               = 0;
+RTC_DATA_ATTR uint32_t s_rtc_dns2               = 0;
 uint32_t g_last_weather_ms = 0;
 
 // ==================== DART STATIONS (DYNAMIC & FALLBACK) ============
@@ -739,7 +747,7 @@ void fetchDublinBusDepartures() {
     yield();
 }
 
-String getLocalTimeString(int* outHour = nullptr, int* outMin = nullptr) {
+String getLocalTimeString(int* outHour = nullptr, int* outMin = nullptr, int* outWday = nullptr) {
     struct tm timeinfo;
     // Wait up to 5000ms on first cold boot (when RTC is not yet synced), or 50ms when RTC already holds time across Deep Sleep
     uint32_t waitMs = (time(nullptr) < 1700000000L) ? 5000 : 50;
@@ -748,14 +756,15 @@ String getLocalTimeString(int* outHour = nullptr, int* outMin = nullptr) {
         snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
         if (outHour) *outHour = timeinfo.tm_hour;
         if (outMin) *outMin = timeinfo.tm_min;
+        if (outWday) *outWday = timeinfo.tm_wday;
         return String(buf);
     }
     return "";
 }
 
 uint32_t calculateSleepSeconds(const std::string& query_time) {
-    int hour = -1, minute = 0;
-    getLocalTimeString(&hour, &minute);
+    int hour = -1, minute = 0, wday = -1;
+    getLocalTimeString(&hour, &minute, &wday);
     if (hour < 0 && query_time.length() >= 5 && query_time != "--:--") {
         hour = std::atoi(query_time.substr(0, 2).c_str());
         minute = std::atoi(query_time.substr(3, 2).c_str());
@@ -771,15 +780,29 @@ uint32_t calculateSleepSeconds(const std::string& query_time) {
             if (totalSeconds > 43200) totalSeconds = 43200;
             return (uint32_t)totalSeconds;
         }
-        if (hour >= 6 && hour < 10) {
-            return COMMUTE_REFRESH_SECONDS;
+
+        // Determine soonest departure across displayed DART trains and Dublin Bus routes
+        int minDueMins = 999;
+        for (size_t i = 0; i < std::min((size_t)2, g_last_board.departures.size()); ++i) {
+            minDueMins = std::min(minDueMins, g_last_board.departures[i].due_in);
         }
-        if (hour >= 16 && hour < 20) {
-            return COMMUTE_REFRESH_SECONDS;
+        for (size_t i = 0; i < std::min((size_t)2, g_last_board.bus_departures.size()); ++i) {
+            minDueMins = std::min(minDueMins, g_last_board.bus_departures[i].due_in);
+        }
+
+        // Weekday commute peak (Mon-Fri 06:00-10:00 and 16:00-19:00)
+        bool isWeekend = (wday == 0 || wday == 6);
+        bool isCommuteWindow = (!isWeekend) && ((hour >= 6 && hour < 10) || (hour >= 16 && hour < 19));
+
+        if (isCommuteWindow) {
+            // If a train or bus is approaching within 12 minutes, refresh every 2m (120s); otherwise 4m (240s)
+            return (minDueMins <= 12) ? COMMUTE_REFRESH_SECONDS : 240;
         }
         if (hour >= 23 || hour < 6) {
             return 1800; // 30 mins
         }
+        // Off-peak / Weekend: 3m (180s) if a departure is imminent (<= 8 min), otherwise 5m (300s)
+        return (minDueMins <= 8) ? 180 : OFFPEAK_REFRESH_SECONDS;
     }
     return OFFPEAK_REFRESH_SECONDS;
 }
@@ -804,6 +827,14 @@ void loadConfig() {
     g_bus_stop_id_2       = prefs.getString("bus_stop2", "8240DB000929");
     g_bus_stop_name_2     = prefs.getString("bus_name2", "Stop 929 (Warrenhouse Rd)");
     prefs.end();
+
+    // Migrate old 21:00 (9pm) NVS value to 19:00 (7pm)
+    if (g_schedule_end_hour == 21) {
+        g_schedule_end_hour = 19;
+        prefs.begin("dart_cfg", false);
+        prefs.putInt("sched_end", 19);
+        prefs.end();
+    }
 }
 
 void saveConfig(
@@ -1052,6 +1083,7 @@ void handleSaveConfig() {
     loadConfig();
 
     if (wifiChanged || g_in_captive_portal) {
+        s_rtc_wifi_valid = false;
         String response = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -1383,8 +1415,75 @@ void redrawCanvas() {
         g_canvas.invert_canvas();
     }
 
-    // Export 800x480 1-bit BMP for live browser preview
-    g_bmp_size = g_canvas.export_bmp_buffer(g_bmp_buffer, sizeof(g_bmp_buffer));
+    // Only export 800x480 1-bit BMP when the live browser preview server is active
+    if (g_keep_web_awake) {
+        g_bmp_size = g_canvas.export_bmp_buffer(g_bmp_buffer, sizeof(g_bmp_buffer));
+    }
+}
+
+static void fnv1aMixStr(uint32_t& hash, const std::string& s) {
+    for (unsigned char c : s) {
+        hash ^= c;
+        hash *= 16777619u;
+    }
+    hash ^= 0xFFu;
+    hash *= 16777619u;
+}
+
+static void fnv1aMixInt(uint32_t& hash, int val) {
+    uint32_t u = (uint32_t)val;
+    for (int i = 0; i < 4; ++i) {
+        hash ^= (u & 0xFFu);
+        hash *= 16777619u;
+        u >>= 8;
+    }
+}
+
+// Compute semantic hash of displayed board content (ignoring the header HH:MM clock & 1% battery jitter)
+// so we skip the 5-second physical e-paper refresh whenever departures and weather haven't meaningfully changed!
+uint32_t computeBoardContentHash(bool isNightStandby) {
+    uint32_t h = 2166136261u;
+    fnv1aMixInt(h, isNightStandby ? 1 : 0);
+    fnv1aMixInt(h, g_reverse_mode ? 1 : 0);
+    fnv1aMixStr(h, g_last_board.station_name);
+    fnv1aMixStr(h, g_direction.c_str());
+
+    if (isNightStandby) {
+        int rain = (g_rain_chance >= 0) ? g_rain_chance : 50;
+        int tmax = (g_temperature > -50.0f) ? (int)(g_temperature + 2) : 15;
+        int tmin = (g_temperature > -50.0f) ? (int)(g_temperature - 3) : 9;
+        int batBucket = (g_battery_percent < 5) ? 0 : ((g_battery_percent < 20) ? 1 : 2);
+        fnv1aMixInt(h, rain);
+        fnv1aMixInt(h, tmax);
+        fnv1aMixInt(h, tmin);
+        fnv1aMixInt(h, batBucket);
+        fnv1aMixInt(h, g_schedule_start_hour);
+    } else {
+        fnv1aMixInt(h, g_last_board.success ? 1 : 0);
+        size_t maxTrains = std::min((size_t)2, g_last_board.departures.size());
+        fnv1aMixInt(h, (int)maxTrains);
+        for (size_t i = 0; i < maxTrains; ++i) {
+            const auto& d = g_last_board.departures[i];
+            fnv1aMixInt(h, d.due_in);
+            fnv1aMixStr(h, d.destination);
+            fnv1aMixStr(h, d.expected);
+            fnv1aMixStr(h, d.status);
+        }
+        size_t maxBuses = std::min((size_t)2, g_last_board.bus_departures.size());
+        fnv1aMixInt(h, (int)maxBuses);
+        for (size_t i = 0; i < maxBuses; ++i) {
+            const auto& b = g_last_board.bus_departures[i];
+            fnv1aMixStr(h, b.route);
+            fnv1aMixInt(h, b.due_in);
+            fnv1aMixStr(h, b.destination);
+            fnv1aMixStr(h, b.expected);
+            fnv1aMixStr(h, b.status);
+        }
+        fnv1aMixInt(h, g_rain_chance);
+        fnv1aMixInt(h, (int)(g_temperature * 2.0f)); // 0.5C steps
+        fnv1aMixInt(h, g_battery_percent / 5);       // 5% battery buckets
+    }
+    return h;
 }
 
 void fetchAndRender() {
@@ -1491,21 +1590,17 @@ void fetchAndRender() {
     // 2. Telemetry log (avoid 6KB ASCII dump over USB-CDC which blocks when no terminal is connected)
     Serial.printf("[Screen] 800x480 BMP buffer ready (%d bytes).\n", (int)g_bmp_size);
 
-    // 3. Update physical Waveshare 7.5" HAT Display (skip if Night Standby or identical bitmap is already displayed!)
-    uint32_t canvasHash = 2166136261u;
+    // 3. Update physical Waveshare 7.5" HAT Display (skip if Night Standby or displayed departures/weather haven't changed!)
+    uint32_t contentHash = computeBoardContentHash(isNightStandby);
     const uint8_t* rawBuf = g_canvas.get_buffer();
-    for (size_t i = 0; i < dart::Canvas::EPD_BUFFER_SIZE; ++i) {
-        canvasHash ^= rawBuf[i];
-        canvasHash *= 16777619u;
-    }
 
-    if ((isNightStandby && s_rtc_night_screen_drawn) || (s_rtc_last_canvas_hash != 0 && canvasHash == s_rtc_last_canvas_hash)) {
-        Serial.println("[EPD] Screen content unchanged; skipping physical 5s e-paper refresh to save battery.");
+    if ((isNightStandby && s_rtc_night_screen_drawn) || (s_rtc_last_canvas_hash != 0 && contentHash == s_rtc_last_canvas_hash)) {
+        Serial.println("[EPD] Departures & weather unchanged; skipping physical 5s e-paper refresh to save battery.");
     } else {
         Serial.println("Updating Waveshare 7.5\" HAT e-paper (safe timeout if disconnected)...");
         updatePhysicalDisplay(rawBuf);
         s_rtc_night_screen_drawn = isNightStandby;
-        s_rtc_last_canvas_hash = canvasHash;
+        s_rtc_last_canvas_hash = contentHash;
     }
     g_last_refresh_ms = millis(); // Ensure at least 60s for web server before next fetch
 }
@@ -1764,23 +1859,53 @@ void setup() {
         g_web_awake_until_ms = millis() + 180000UL; // 3-minute web server window after Reset/BOOT/OTA
     }
 
-    // 4. Connect Wi-Fi
+    // Scale CPU down to 80 MHz during background battery timer wakes (~20mA vs ~50mA at 240 MHz)
+    if (isTimerWake && !g_test_mode) {
+        setCpuFrequencyMhz(80);
+    }
+
+    // 4. Connect Wi-Fi (with RTC BSSID + Channel + IP Fast-Reconnect on timer wakes!)
     if (!isTimerWake) {
         setStatusLed(0, 0, 32); // Blue: connecting to Wi-Fi
     }
     Serial.printf("Connecting to Wi-Fi: %s", g_wifi_ssid.c_str());
+    WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     WiFi.setHostname("dart-display");
-    WiFi.begin(g_wifi_ssid.c_str(), g_wifi_password.c_str());
+
     uint32_t wifiStart = millis();
+    if (isTimerWake && s_rtc_wifi_valid && s_rtc_channel > 0 && s_rtc_local_ip != 0) {
+        WiFi.config(
+            IPAddress(s_rtc_local_ip),
+            IPAddress(s_rtc_gateway),
+            IPAddress(s_rtc_subnet),
+            IPAddress(s_rtc_dns1),
+            IPAddress(s_rtc_dns2)
+        );
+        WiFi.begin(g_wifi_ssid.c_str(), g_wifi_password.c_str(), s_rtc_channel, s_rtc_bssid, true);
+        while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 3500) {
+            delay(20);
+        }
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.print(" [Fast-Connect miss; scanning all channels]");
+            s_rtc_wifi_valid = false;
+            WiFi.disconnect(false, true);
+            WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
+            WiFi.begin(g_wifi_ssid.c_str(), g_wifi_password.c_str());
+        }
+    } else {
+        WiFi.begin(g_wifi_ssid.c_str(), g_wifi_password.c_str());
+    }
+
     while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) {
         Serial.print(".");
-        delay(250);
+        delay(50);
     }
 
     // If Wi-Fi fails to connect after 15 seconds:
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("\n[ERROR] Failed to connect to saved Wi-Fi network.");
+        s_rtc_wifi_valid = false;
         if (g_test_mode || !isTimerWake || g_wifi_ssid.length() == 0) {
             Serial.println("[Fallback] Starting Captive Portal for Wi-Fi reconfiguration...");
             startCaptivePortal();
@@ -1790,16 +1915,31 @@ void setup() {
         }
     }
 
+    // Cache BSSID, channel, and IP configuration in RTC memory for 200ms wake reconnects
+    if (uint8_t* bssid = WiFi.BSSID()) {
+        memcpy(s_rtc_bssid, bssid, 6);
+        s_rtc_channel  = WiFi.channel();
+        s_rtc_local_ip = (uint32_t)WiFi.localIP();
+        s_rtc_gateway  = (uint32_t)WiFi.gatewayIP();
+        s_rtc_subnet   = (uint32_t)WiFi.subnetMask();
+        s_rtc_dns1     = (uint32_t)WiFi.dnsIP(0);
+        s_rtc_dns2     = (uint32_t)WiFi.dnsIP(1);
+        s_rtc_wifi_valid = (s_rtc_channel > 0 && s_rtc_local_ip != 0);
+    }
+
     if (!isTimerWake) {
         setStatusLed(0, 32, 0); // Green: connected and running!
     }
-    Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("\nConnected in %u ms! IP: %s (Ch %d)\n",
+        millis() - wifiStart, WiFi.localIP().toString().c_str(), (int)WiFi.channel());
 
-    // Synchronize local time via SNTP for accurate schedule switching
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
-    setenv("TZ", "GMT0IST,M3.5.0/1,M10.5.0", 1);
-    tzset();
-    Serial.println("[NTP] Time synchronization initialized (Europe/Dublin).");
+    // Only start SNTP sync on cold boot, manual reset, or periodically (every ~64 wakes)
+    if (!isTimerWake || time(nullptr) < 1700000000L || (s_rtc_weather_wake_count % 64 == 0)) {
+        configTime(0, 0, "pool.ntp.org", "time.google.com");
+        setenv("TZ", "GMT0IST,M3.5.0/1,M10.5.0", 1);
+        tzset();
+        Serial.println("[NTP] Time synchronization initialized (Europe/Dublin).");
+    }
 
     // 5. Initial Fetch and Render (uses built-in station coordinates; shuts off Wi-Fi before EPD refresh if sleeping)
     fetchAndRender();
