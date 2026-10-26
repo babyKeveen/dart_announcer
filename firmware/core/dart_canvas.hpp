@@ -267,11 +267,6 @@ public:
         std::string dart_title = "DART  •  " + dart_st + "  •  " + dart_dir;
         draw_string(24, 9, dart_title, false, 3);
 
-        // Current Time (Header Right-Hand Side, right-aligned to X = 776)
-        std::string clock = board.query_time.empty() ? "--:--" : board.query_time;
-        int clock_w = get_string_width(clock, 3);
-        draw_string(776 - clock_w, 9, clock, false, 3);
-
         // Next 2 DART Departures
         if (board.departures.empty()) {
             std::string msg1 = "NO UPCOMING DART DEPARTURES";

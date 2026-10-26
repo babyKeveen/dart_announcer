@@ -495,12 +495,6 @@ def _render_commute(
     dart_title = f"DART  •  {st_name}  •  {dir_str}"
     draw.text((24, 7), dart_title, fill=1, font=f_title)
 
-    # Time (Header Right-Hand Side, right-aligned to X = 776)
-    clock_str = datetime.now().strftime("%H:%M")
-    clock_box = f_title.getbbox(clock_str)
-    clock_w = clock_box[2] - clock_box[0]
-    draw.text((776 - clock_w, 7), clock_str, fill=1, font=f_title)
-
     # Next 2 Trains (Row 1 at Y: 59, Row 2 at Y: 123)
     y_trains = [59, 123]
     if not result.departures:
