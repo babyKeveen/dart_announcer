@@ -781,13 +781,20 @@ uint32_t calculateSleepSeconds(const std::string& query_time) {
             return (uint32_t)totalSeconds;
         }
 
-        // Determine soonest departure across displayed DART trains and Dublin Bus routes
-        int minDueMins = 999;
+        // Check if any displayed DART train or Dublin Bus is in the actionable
+        // "walk-to-station" window (6-18 mins ETA). Since walking takes ~10 mins,
+        // departures <= 5 mins are already too late to catch from home.
+        bool hasCatchableCommute = false; // 6 to 18 mins ETA
+        bool hasCatchableOffpeak = false; // 6 to 15 mins ETA
         for (size_t i = 0; i < std::min((size_t)2, g_last_board.departures.size()); ++i) {
-            minDueMins = std::min(minDueMins, g_last_board.departures[i].due_in);
+            int due = g_last_board.departures[i].due_in;
+            if (due >= 6 && due <= 18) hasCatchableCommute = true;
+            if (due >= 6 && due <= 15) hasCatchableOffpeak = true;
         }
         for (size_t i = 0; i < std::min((size_t)2, g_last_board.bus_departures.size()); ++i) {
-            minDueMins = std::min(minDueMins, g_last_board.bus_departures[i].due_in);
+            int due = g_last_board.bus_departures[i].due_in;
+            if (due >= 6 && due <= 18) hasCatchableCommute = true;
+            if (due >= 6 && due <= 15) hasCatchableOffpeak = true;
         }
 
         // Weekday commute peak (Mon-Fri 06:00-10:00 and 16:00-19:00)
@@ -795,14 +802,15 @@ uint32_t calculateSleepSeconds(const std::string& query_time) {
         bool isCommuteWindow = (!isWeekend) && ((hour >= 6 && hour < 10) || (hour >= 16 && hour < 19));
 
         if (isCommuteWindow) {
-            // If a train or bus is approaching within 12 minutes, refresh every 2m (120s); otherwise 4m (240s)
-            return (minDueMins <= 12) ? COMMUTE_REFRESH_SECONDS : 240;
+            // Refresh every 2m (120s) only when a departure is in the catchable 6-18m walk window;
+            // drop to 4m (240s) if departures are <= 5m (too late to catch) or > 18m away
+            return hasCatchableCommute ? COMMUTE_REFRESH_SECONDS : 240;
         }
         if (hour >= 23 || hour < 6) {
             return 1800; // 30 mins
         }
-        // Off-peak / Weekend: 3m (180s) if a departure is imminent (<= 8 min), otherwise 5m (300s)
-        return (minDueMins <= 8) ? 180 : OFFPEAK_REFRESH_SECONDS;
+        // Off-peak / Weekend: 3m (180s) if a departure is in the catchable 6-15m window, otherwise 5m (300s)
+        return hasCatchableOffpeak ? 180 : OFFPEAK_REFRESH_SECONDS;
     }
     return OFFPEAK_REFRESH_SECONDS;
 }
