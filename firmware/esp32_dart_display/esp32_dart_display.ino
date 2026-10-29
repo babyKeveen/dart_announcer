@@ -86,8 +86,8 @@ const int PIN_BOOT_BTN = 0;   // BOOT button on Adafruit ESP32-S3 Feather
 const char* DEFAULT_STATION_CODE  = "SUTTN";
 const char* DEFAULT_DIRECTION     = "Southbound";
 const int   DEFAULT_NUM_MINS      = 90;
-const int   DEFAULT_CATCHABLE_MIN_MINS = 6;  // Departures < 6 min (<= 5 min) are too late to walk to
-const int   DEFAULT_CATCHABLE_MAX_MINS = 18; // Departures <= 18 min trigger fast refresh
+const int   DEFAULT_CATCHABLE_MIN_MINS = 10; // Departures < 10 min (<= 9 min) are too late for the 10-min walk
+const int   DEFAULT_CATCHABLE_MAX_MINS = 22; // Departures 10..22 min trigger fast refresh
 const uint32_t COMMUTE_REFRESH_SECONDS = 120; // 2 minutes when train/bus is in catchable window during weekday peak
 const uint32_t OFFPEAK_REFRESH_SECONDS = 300; // 5 minutes
 
@@ -138,6 +138,8 @@ RTC_DATA_ATTR int      g_rain_chance            = -1;
 RTC_DATA_ATTR float    g_temperature            = -99.0f;
 RTC_DATA_ATTR uint32_t s_rtc_weather_wake_count = 0;
 RTC_DATA_ATTR float    s_rtc_last_vbat          = 0.0f;
+RTC_DATA_ATTR int      s_rtc_battery_pct        = -1;
+RTC_DATA_ATTR bool     s_rtc_battery_lipo       = false;
 RTC_DATA_ATTR bool     s_rtc_night_screen_drawn = false;
 RTC_DATA_ATTR uint32_t s_rtc_last_canvas_hash   = 0;
 RTC_DATA_ATTR bool     s_rtc_Entered_deep_sleep = false;
@@ -509,6 +511,16 @@ bool detectUsbHostConnection() {
 }
 
 void readBatteryStatus() {
+    // On background battery timer wakes, reuse cached battery % for 4 out of 5 wakes (~10-15 mins)
+    // to skip powering the I2C bus and polling MAX17048 400 times a day.
+    if (!g_keep_web_awake && s_rtc_battery_pct >= 0 && s_rtc_last_vbat > 3.35f && (s_rtc_weather_wake_count % 5 != 0)) {
+        g_battery_voltage = s_rtc_last_vbat;
+        g_battery_percent = s_rtc_battery_pct;
+        g_battery_is_lipo = s_rtc_battery_lipo;
+        g_usb_powered = false;
+        return;
+    }
+
     static bool s_i2c_initialized = false;
     if (!s_i2c_initialized) {
         pinMode(PIN_I2C_POWER, OUTPUT);
@@ -563,12 +575,21 @@ void readBatteryStatus() {
         }
     }
 
+    // Power down I2C rail immediately after reading on battery timer wakes so it doesn't draw power during 5-8s Wi-Fi/EPD wake
+    if (!g_keep_web_awake && s_i2c_initialized) {
+        Wire.end();
+        digitalWrite(PIN_I2C_POWER, LOW);
+        s_i2c_initialized = false;
+    }
+
     // Detect if USB-C power is present:
     // 1. Actively connected (not suspended) to a USB host (PC/laptop), OR
     // 2. No LiPo attached (running purely off USB 5V)
     bool usbHost = detectUsbHostConnection();
     g_usb_powered = usbHost || !g_battery_is_lipo;
     s_rtc_last_vbat = g_battery_voltage;
+    s_rtc_battery_pct = g_battery_percent;
+    s_rtc_battery_lipo = g_battery_is_lipo;
 }
 
 float readBatteryVoltage() {
@@ -848,11 +869,19 @@ void loadConfig() {
     g_catchable_min_mins = constrain(g_catchable_min_mins, 0, 60);
     g_catchable_max_mins = constrain(g_catchable_max_mins, g_catchable_min_mins, 90);
 
-    // Migrate old 21:00 (9pm) NVS value to 19:00 (7pm)
-    if (g_schedule_end_hour == 21) {
-        g_schedule_end_hour = 19;
+    // Migrate old 21:00 (9pm) NVS value to 19:00 (7pm), and old (6, 18) Catchability defaults to (10, 22)
+    if (g_schedule_end_hour == 21 || (g_catchable_min_mins == 6 && g_catchable_max_mins == 18)) {
         prefs.begin("dart_cfg", false);
-        prefs.putInt("sched_end", 19);
+        if (g_schedule_end_hour == 21) {
+            g_schedule_end_hour = 19;
+            prefs.putInt("sched_end", 19);
+        }
+        if (g_catchable_min_mins == 6 && g_catchable_max_mins == 18) {
+            g_catchable_min_mins = DEFAULT_CATCHABLE_MIN_MINS;
+            g_catchable_max_mins = DEFAULT_CATCHABLE_MAX_MINS;
+            prefs.putInt("catch_min", g_catchable_min_mins);
+            prefs.putInt("catch_max", g_catchable_max_mins);
+        }
         prefs.end();
     }
 }
@@ -1622,12 +1651,13 @@ void fetchAndRender() {
     }
 
     // Power-saving optimization: if we are on battery and going straight to Deep Sleep,
-    // shut down the Wi-Fi radio (~120mA) BEFORE the 5-second e-paper SPI refresh!
+    // shut down the Wi-Fi radio (~120mA) and drop CPU to 80MHz BEFORE the 5-second e-paper SPI refresh!
     if (!g_keep_web_awake) {
-        Serial.println("[Power] Shutting down Wi-Fi radio before e-paper refresh (~120mA saved during 5s refresh)...");
+        Serial.println("[Power] Shutting down Wi-Fi radio & scaling CPU to 80MHz before e-paper refresh...");
         WiFi.disconnect(true);
         WiFi.mode(WIFI_OFF);
         esp_wifi_stop();
+        setCpuFrequencyMhz(80);
     }
 
     redrawCanvas();
@@ -1924,9 +1954,9 @@ void setup() {
         g_web_awake_until_ms = millis() + 300000UL; // 5-minute web server window after Reset/BOOT/OTA
     }
 
-    // Scale CPU down to 80 MHz and arm 40-second hardware watchdog during background battery timer wakes
+    // Arm 40-second hardware watchdog during background battery timer wakes
+    // (Keep CPU at 240 MHz during Wi-Fi/TLS burst so 120mA radio shuts off ~800ms sooner; drop to 80 MHz after Wi-Fi OFF)
     if (isTimerWake && !g_test_mode) {
-        setCpuFrequencyMhz(80);
         esp_timer_create_args_t wdtArgs = {};
         wdtArgs.callback = &wakeWatchdogCallback;
         wdtArgs.name = "wake_wdt";
@@ -1942,6 +1972,7 @@ void setup() {
     Serial.printf("Connecting to Wi-Fi: %s", g_wifi_ssid.c_str());
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(WIFI_PS_MIN_MODEM);
     WiFi.setHostname("dart-display");
 
     uint32_t wifiStart = millis();

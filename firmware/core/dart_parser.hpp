@@ -161,9 +161,25 @@ public:
             std::string row = html.substr(tr_start, tr_end - tr_start + 5);
             pos = tr_end + 5;
 
-            // Find all <td> chunks
+            // Pre-check 1st <td> (Route) before allocating vector for all <td> cells
+            size_t td0_start = row.find("<td");
+            if (td0_start == std::string::npos) continue;
+            size_t td0_content = row.find('>', td0_start);
+            if (td0_content == std::string::npos || td0_content >= row.length()) continue;
+            size_t td0_end = row.find("</td>", td0_content);
+            if (td0_end == std::string::npos) continue;
+
+            std::string route = strip_html_tags(row.substr(td0_content + 1, td0_end - td0_content - 1));
+            std::string route_up = route;
+            std::transform(route_up.begin(), route_up.end(), route_up.begin(), ::toupper);
+            if (!target_rt.empty() && route_up != target_rt) {
+                continue;
+            }
+
+            // Find remaining <td> chunks for matching route
             std::vector<std::string> tds;
-            size_t td_pos = 0;
+            tds.push_back(row.substr(td0_content + 1, td0_end - td0_content - 1));
+            size_t td_pos = td0_end + 5;
             while (td_pos < row.length()) {
                 size_t td_start = row.find("<td", td_pos);
                 if (td_start == std::string::npos) break;
@@ -177,14 +193,6 @@ public:
             }
 
             if (tds.size() < 3) continue;
-
-            // 1. Route
-            std::string route = strip_html_tags(tds[0]);
-            std::string route_up = route;
-            std::transform(route_up.begin(), route_up.end(), route_up.begin(), ::toupper);
-            if (!target_rt.empty() && route_up != target_rt) {
-                continue;
-            }
 
             // 2. Destination (strip vehicle div and newlines if present)
             std::string dest_cell = tds[1];
