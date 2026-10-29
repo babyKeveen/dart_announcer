@@ -615,7 +615,7 @@ def _render_commute(
         draw.rectangle([(bx1, 450), (bx1 + umb_w + 16, 470)], fill=0)
         draw.text((bx1 + 8, 452), umb_txt, fill=1, font=f_footer)
 
-    # 2. Battery (Right, right-aligned to X = 776) & Tiny Version Tag
+    # 2. Battery (Right, right-aligned to X = 776), Last Refreshed & Tiny Version Tag
     bat_pct = battery if battery is not None else 100
     bat_txt = f"{bat_pct}%" if battery is not None else "--%"
     bat_bbox = f_footer.getbbox(bat_txt)
@@ -624,10 +624,17 @@ def _render_commute(
     bat_start_x = 776 - bat_total_w
 
     f_ver = _load_font("DejaVuSans-Bold.ttf", 10)
-    ver_txt = "v1.4"
+    ver_txt = "v2.3"
     ver_bbox = f_ver.getbbox(ver_txt)
     ver_w = ver_bbox[2] - ver_bbox[0]
-    draw.text((bat_start_x - ver_w - 14, 456), ver_txt, fill=0, font=f_ver)
+    ver_x = bat_start_x - ver_w - 8
+    draw.text((ver_x, 456), ver_txt, fill=0, font=f_ver)
+
+    t_str = (result.query_time or datetime.now().strftime("%H:%M"))[:5]
+    ref_txt = f"REFRESHED {t_str}"
+    ref_bbox = f_footer.getbbox(ref_txt)
+    ref_w = ref_bbox[2] - ref_bbox[0]
+    draw.text((ver_x - ref_w - 10, 452), ref_txt, fill=0, font=f_footer)
 
     draw.text((bat_start_x, 452), bat_txt, fill=0, font=f_footer)
 

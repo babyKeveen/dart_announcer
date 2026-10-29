@@ -415,7 +415,7 @@ public:
         // 1. Weather (Left, X: 24)
         char w_buf[64];
         if (temp_c > -50.0f && rain_chance >= 0) {
-            snprintf(w_buf, sizeof(w_buf), "WEATHER: %.1f°C  •  RAIN: %d%%", temp_c, rain_chance);
+            snprintf(w_buf, sizeof(w_buf), "WEATHER: %.1f°C • RAIN: %d%%", temp_c, rain_chance);
         } else if (temp_c > -50.0f) {
             snprintf(w_buf, sizeof(w_buf), "WEATHER: %.1f°C", temp_c);
         } else {
@@ -427,11 +427,11 @@ public:
             int ww = get_string_width(w_buf, 2);
             std::string umb_s = "UMBRELLA";
             int umb_w = get_string_width(umb_s, 2);
-            fill_rect(24 + ww + 12, 452, umb_w + 16, 20, true);
-            draw_string(24 + ww + 20, 455, umb_s, false, 2);
+            fill_rect(24 + ww + 10, 452, umb_w + 14, 20, true);
+            draw_string(24 + ww + 17, 455, umb_s, false, 2);
         }
 
-        // 2. Battery (Right, right-aligned to X = 776) & Tiny Version Tag
+        // 2. Battery (Right, right-aligned to X = 776), Last Refreshed & Tiny Version Tag
         std::string bat_s = (battery_percent >= 0 ? (std::to_string(battery_percent) + "%") : "--%");
         int bat_text_w = get_string_width(bat_s, 2);
         int bat_icon_w = 37; // 34px body + 3px terminal nub
@@ -440,7 +440,15 @@ public:
 
         // Tiny firmware version tag (scale 1 = 5x7px) just to the left of the battery indicator
         int ver_w = get_string_width(FIRMWARE_VERSION, 1);
-        draw_string(bat_start_x - ver_w - 14, 460, FIRMWARE_VERSION, true, 1);
+        int ver_x = bat_start_x - ver_w - 8;
+        draw_string(ver_x, 460, FIRMWARE_VERSION, true, 1);
+
+        // Last refreshed reassurance timestamp (scale 2 = 10x14px) to the left of the version tag
+        std::string t_str = (board.query_time.empty() ? "--:--" : board.query_time);
+        if (t_str.length() > 5) t_str = t_str.substr(0, 5);
+        std::string ref_s = "REFRESHED " + t_str;
+        int ref_w = get_string_width(ref_s, 2);
+        draw_string(ver_x - ref_w - 10, 455, ref_s, true, 2);
 
         draw_string(bat_start_x, 455, bat_s, true, 2);
 
