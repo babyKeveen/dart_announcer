@@ -624,7 +624,7 @@ def _render_commute(
     bat_start_x = 776 - bat_total_w
 
     f_ver = _load_font("DejaVuSans-Bold.ttf", 10)
-    ver_txt = "v2.3"
+    ver_txt = "v2.4"
     ver_bbox = f_ver.getbbox(ver_txt)
     ver_w = ver_bbox[2] - ver_bbox[0]
     ver_x = bat_start_x - ver_w - 8
