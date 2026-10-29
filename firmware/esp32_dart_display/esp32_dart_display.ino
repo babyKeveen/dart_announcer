@@ -1042,7 +1042,7 @@ String buildPortalHtml() {
     html += R"rawliteral(
       </select>
 
-      <label>Catchable Walk Window (Fast Refresh ETA in Mins)</label>
+      <label>Catchability Settings (Fast Refresh ETA in Mins)</label>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
         <div>
           <label for="catch_min" style="font-size:11px; color:#94a3b8;">Min ETA (Too-Late Cutoff)</label>
@@ -1399,7 +1399,7 @@ String buildPreviewHtml() {
     html += "<div>Rain Chance: <b>" + rainInfo + "</b></div>";
     html += "<div>Battery: <b>" + batInfo + "</b></div>";
     html += "<div>Theme: <b>" + String(g_reverse_mode ? "Reverse (Dark)" : "Standard") + "</b></div>";
-    html += "<div>Walk Window: <b>" + String(g_catchable_min_mins) + "–" + String(g_catchable_max_mins) + "m</b></div>";
+    html += "<div>Catchability: <b>" + String(g_catchable_min_mins) + "–" + String(g_catchable_max_mins) + "m</b></div>";
     html += "<div>Firmware: <b>" + String(dart::Canvas::FIRMWARE_VERSION) + "</b></div>";
     if (!g_test_mode && g_web_awake_until_ms > millis()) {
         uint32_t remSec = (g_web_awake_until_ms - millis()) / 1000UL;
