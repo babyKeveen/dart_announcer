@@ -52,6 +52,7 @@
 #include "esp_ota_ops.h"
 #include <esp_wifi.h>
 #include <esp_sleep.h>
+#include "esp_timer.h"
 #include "driver/gpio.h"
 #if !ARDUINO_USB_MODE
 #include "USB.h"
@@ -514,6 +515,7 @@ void readBatteryStatus() {
         digitalWrite(PIN_I2C_POWER, HIGH);
         delay(5);
         Wire.begin(SDA, SCL);
+        Wire.setTimeOut(50); // 50ms I2C timeout so a bus glitch can never hang wakeup
         s_i2c_initialized = true;
     }
 
@@ -1562,7 +1564,8 @@ void fetchAndRender() {
             xmlResponse = http.getString().c_str();
             Serial.printf("[API] Received %d bytes XML.\n", (int)xmlResponse.length());
         } else {
-            Serial.printf("[ERROR] HTTP GET failed (code %d)\n", httpCode);
+            Serial.printf("[ERROR] HTTP GET failed (code %d) - invalidating cached Wi-Fi IP for next wake\n", httpCode);
+            s_rtc_wifi_valid = false;
         }
         http.end();
 
@@ -1722,7 +1725,27 @@ void setupPreviewServer() {
 }
 
 // ======================== POWER & DEEP SLEEP MANAGEMENT ========================
+static esp_timer_handle_t s_wake_watchdog_timer = nullptr;
+
+static void IRAM_ATTR wakeWatchdogCallback(void* arg) {
+    // Hard 40-second deadline for background battery timer wakes:
+    // If DNS, TLS (bustimes.org), HTTP, or Wi-Fi ever hangs, force immediate Deep Sleep
+    // so the board never stays stuck awake or freezes on an old frame!
+    s_rtc_wifi_valid = false;
+    s_rtc_Entered_deep_sleep = true;
+    pinMode(PIN_EPD_PWR, OUTPUT);
+    digitalWrite(PIN_EPD_PWR, LOW);
+    gpio_hold_en((gpio_num_t)PIN_EPD_PWR);
+    gpio_deep_sleep_hold_en();
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    esp_sleep_enable_timer_wakeup(120ULL * 1000000ULL);
+    esp_deep_sleep_start();
+}
+
 void prepareForDeepSleep(uint32_t sleepSeconds) {
+    if (s_wake_watchdog_timer) {
+        esp_timer_stop(s_wake_watchdog_timer);
+    }
     Serial.printf("\n[Power] Preparing for deep sleep (%u seconds)...\n", sleepSeconds);
 
     // 1. Put e-paper display controller into deep sleep (calls SPI.end() if display was initialized)
@@ -1901,12 +1924,18 @@ void setup() {
         g_web_awake_until_ms = millis() + 300000UL; // 5-minute web server window after Reset/BOOT/OTA
     }
 
-    // Scale CPU down to 80 MHz during background battery timer wakes (~20mA vs ~50mA at 240 MHz)
+    // Scale CPU down to 80 MHz and arm 40-second hardware watchdog during background battery timer wakes
     if (isTimerWake && !g_test_mode) {
         setCpuFrequencyMhz(80);
+        esp_timer_create_args_t wdtArgs = {};
+        wdtArgs.callback = &wakeWatchdogCallback;
+        wdtArgs.name = "wake_wdt";
+        if (esp_timer_create(&wdtArgs, &s_wake_watchdog_timer) == ESP_OK) {
+            esp_timer_start_once(s_wake_watchdog_timer, 40ULL * 1000000ULL); // 40s hard limit
+        }
     }
 
-    // 4. Connect Wi-Fi (with RTC BSSID + Channel + IP Fast-Reconnect on timer wakes!)
+    // 4. Connect Wi-Fi (with RTC BSSID + Channel + IP Fast-Reconnect on timer wakes; renew DHCP every 24 wakes)
     if (!isTimerWake) {
         setStatusLed(0, 0, 32); // Blue: connecting to Wi-Fi
     }
@@ -1916,7 +1945,8 @@ void setup() {
     WiFi.setHostname("dart-display");
 
     uint32_t wifiStart = millis();
-    if (isTimerWake && s_rtc_wifi_valid && s_rtc_channel > 0 && s_rtc_local_ip != 0) {
+    bool allowFastConnect = isTimerWake && s_rtc_wifi_valid && s_rtc_channel > 0 && s_rtc_local_ip != 0 && ((s_rtc_weather_wake_count % 24) != 0);
+    if (allowFastConnect) {
         WiFi.config(
             IPAddress(s_rtc_local_ip),
             IPAddress(s_rtc_gateway),
